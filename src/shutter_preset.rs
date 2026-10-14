@@ -139,6 +139,24 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
             } else { skipped.push(format!("Unsupported audio bitrate: {value}")); }
         }
     }
+    // Shutter's conform-FPS option is opt-in. Its fractional rates (e.g.
+    // 23,98 and 29,97) cannot be represented by our integer FPS setting.
+    // Never round them silently to a different cadence.
+    if get("caseConform") == Some("true") {
+        if !preset.video() {
+            skipped.push("Frame-rate conform is unavailable for this function".into());
+        } else if let Some(value) = get("comboFPS") {
+            match value.trim().parse::<u16>() {
+                Ok(fps) if (1..=240).contains(&fps) => {
+                    settings.frame_rate = fps;
+                    applied.push(format!("Conform frame rate: {fps} FPS"));
+                }
+                _ => skipped.push(format!("Fractional or unsupported conform FPS: {value}")),
+            }
+        } else {
+            skipped.push("Conform FPS enabled without a stored frame rate".into());
+        }
+    }
     // Shutter Encoder's QMax checkbox controls quantizer constraints;
     // it is NOT an encoding-speed preset. Never substitute a speed setting.
     if get("caseQMax") == Some("true") && preset.video() {
@@ -204,6 +222,19 @@ mod tests {
         let result = import_xml(xml, &Settings::default()).unwrap();
         assert_eq!(result.settings.audio_bitrate_kbps, 256);
         assert!(result.settings.deinterlace);
+    }
+    #[test]
+    fn conform_fps_imports_only_exact_integer_rates() {
+        let xml = |fps: &str| format!(
+            "<Settings><Component><Name>comboFonctions</Name><Value>H.264</Value></Component><Component><Name>caseConform</Name><Value>true</Value></Component><Component><Name>comboFPS</Name><Value>{fps}</Value></Component></Settings>");
+        let integer = import_xml(&xml("60"), &Settings::default()).unwrap();
+        assert_eq!(integer.settings.frame_rate, 60);
+        let fractional = import_xml(&xml("59,94"), &Settings::default()).unwrap();
+        assert_eq!(fractional.settings.frame_rate, 0);
+        assert!(fractional.skipped.iter().any(|entry| entry.contains("59,94")));
+        let disabled = xml("30").replace("<Value>true</Value>", "<Value>false</Value>");
+        let no_conform = import_xml(&disabled, &Settings::default()).unwrap();
+        assert_eq!(no_conform.settings.frame_rate, 0);
     }
     #[test]
     fn qmax_does_not_change_encoder_speed() {
