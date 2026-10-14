@@ -1180,7 +1180,7 @@ impl EncoderApp {
                                 true, "Target bitrate").changed();
                         });
                         if self.settings.use_video_bitrate {
-                            let allowed = matches!(self.settings.preset, Preset::H264 | Preset::Vp9)
+                            let allowed = matches!(self.settings.preset, Preset::H264 | Preset::H265 | Preset::Vp9)
                                 && self.settings.hardware_encoder == HardwareEncoder::Software;
                             changed |= ui.add_enabled(allowed,
                                 egui::Checkbox::new(&mut self.settings.two_pass,
@@ -1190,7 +1190,7 @@ impl EncoderApp {
                                 self.settings.two_pass = false;
                                 changed = true;
                             }
-                            if !allowed { ui.small("Two-pass needs software H.264 or VP9."); }
+                            if !allowed { ui.small("Two-pass needs software H.264, H.265 or VP9."); }
                             ui.label("Target video bitrate (kb/s)");
                             changed |= ui.add(egui::DragValue::new(&mut self.settings.video_bitrate_kbps)
                                 .range(100..=100_000).speed(50.0)).changed();
