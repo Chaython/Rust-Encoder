@@ -451,7 +451,7 @@ mod tests {
         std::fs::write(&input, b"test").unwrap();
         for preset in Preset::ALL {
             let o = options(preset);
-            let args = build_args(&input, &input.with_extension(preset.extension()), &o).unwrap();
+            let args = build_args(&input, &std::env::temp_dir().join(format!("rust-encoder-test-output-{preset:?}.{}", preset.extension())), &o).unwrap();
             assert!(args.iter().any(|a| a.as_os_str() == input.as_os_str()), "{preset:?}");
             assert!(!args.is_empty(), "{preset:?}");
         }
