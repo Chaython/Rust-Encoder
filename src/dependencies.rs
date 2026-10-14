@@ -2,10 +2,11 @@
 //! touching PATH or requiring administrator privileges.
 use crate::model;
 use sha2::{Digest, Sha256};
+use crossbeam_channel::Sender;
 use serde::Deserialize;
 use std::{
     fs::{self, File}, io::{self, Read, Write}, path::{Path, PathBuf},
-    process::Command, sync::mpsc::Sender, time::Duration,
+    process::Command, time::Duration,
 };
 
 const OWNER: &str = "binmgr";
