@@ -163,6 +163,21 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
         if source == destination {
             return Err("Input and output resolve to the same file".into());
         }
+        // Canonical paths differ for hard links even though both directory
+        // entries refer to the same inode. Never feed that alias to FFmpeg.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let source_meta = fs::metadata(input)
+                .map_err(|error| format!("Cannot inspect input: {error}"))?;
+            let output_meta = fs::metadata(temp_output)
+                .map_err(|error| format!("Cannot inspect output: {error}"))?;
+            if source_meta.dev() == output_meta.dev()
+                && source_meta.ino() == output_meta.ino()
+            {
+                return Err("Input and output refer to the same hard-linked file".into());
+            }
+        }
     }
 
     let loglevel = if o.preset.report() { "info" } else { "error" };
@@ -922,6 +937,21 @@ mod tests {
         assert_eq!(fs::read(&initially_free).unwrap(), b"other job");
         assert_eq!(fs::read(&new_destination).unwrap(), b"encoded payload");
         assert!(!temp.path.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn hard_linked_output_cannot_alias_input() {
+        let dir = std::env::temp_dir().join(format!(
+            "rust-encoder-hardlink-{}-{:?}", std::process::id(), std::thread::current().id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("source.mkv");
+        let alias = dir.join("alias.mkv");
+        fs::write(&input, b"original bytes").unwrap();
+        fs::hard_link(&input, &alias).unwrap();
+        let error = build_args(&input, &alias, &options(Preset::RemuxMkv)).unwrap_err();
+        assert!(error.contains("hard-linked"), "{error}");
+        assert_eq!(fs::read(&input).unwrap(), b"original bytes");
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]
