@@ -1,0 +1,21 @@
+[package]
+name = "rust-encoder"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "Rust-native desktop media transcoder and batch converter"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+eframe = { version = "=0.36.2", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
+rfd = "0.16"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+crossbeam-channel = "0.5"
+dirs = "6.0"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

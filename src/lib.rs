@@ -1,0 +1,5 @@
+//! Core modules of the Rust Encoder desktop application.
+//! FFmpeg and FFprobe remain external media tools; app logic is Rust.
+pub mod encode;
+pub mod media;
+pub mod model;
