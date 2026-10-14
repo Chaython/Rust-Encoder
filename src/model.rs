@@ -228,6 +228,8 @@ impl Default for Settings {
 pub struct EncodeOptions {
     pub preset: Preset,
     pub quality: u8,
+    pub output_bit_depth: u8,
+    pub color_signal: ColorSignal,
     pub use_video_bitrate: bool,
     pub two_pass: bool,
     pub video_bitrate_kbps: u32,

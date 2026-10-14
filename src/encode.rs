@@ -841,9 +841,6 @@ mod tests {
         assert!(first.iter().any(|x| x == "-an"));
         assert!(first.iter().any(|x| x == "-f"));
         assert!(!second.iter().any(|x| x == "-f"));
-        let path = dir.0.clone();
-        drop(dir);
-        assert!(!path.exists());
         o.use_video_bitrate = false;
         assert!(validate_options(&o).is_err());
         o.use_video_bitrate = true;
@@ -856,6 +853,9 @@ mod tests {
         assert!(hevc_first.windows(2).any(|v| v[0] == "-x265-params"
             && v[1].to_string_lossy().contains("pass=1:stats=encode.stats")));
         assert!(!hevc_first.iter().any(|value| value == "-passlogfile"));
+        let path = dir.0.clone();
+        drop(dir);
+        assert!(!path.exists());
         std::fs::remove_file(input).unwrap();
     }
 
