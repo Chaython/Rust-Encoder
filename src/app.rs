@@ -564,7 +564,7 @@ impl eframe::App for EncoderApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_events();
         let dropped_files: Vec<PathBuf> = ui.ctx().input(|input| input.raw.dropped_files.iter()
-            .filter_map(|file| file.path.clone()).collect());
+            .map(|file| file.path().to_path_buf()).collect());
         if !dropped_files.is_empty() { self.add_files(dropped_files); }
         ui.ctx().set_visuals(if self.settings.dark_theme { egui::Visuals::dark() }
             else { egui::Visuals::light() });
