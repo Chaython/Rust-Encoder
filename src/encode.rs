@@ -69,6 +69,9 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     }
     if options.encoder_threads > 32 { return Err("Encoder threads must be 0–32".into()); }
     if options.keyframe_interval > 1000 { return Err("Keyframe interval must be 0–1000".into()); }
+    if options.max_video_bitrate_kbps > 0 && !options.use_video_bitrate {
+        return Err("Peak bitrate requires target-bitrate mode; it is ignored in constant-quality mode".into());
+    }
     if options.use_video_bitrate && options.preset.video() {
         if !(100..=100_000).contains(&options.video_bitrate_kbps) {
             return Err("Target bitrate must be 100–100000 kb/s".into());
@@ -1209,6 +1212,14 @@ mod tests {
         std::fs::remove_file(input).unwrap();
     }
 
+    #[test]
+    fn peak_bitrate_requires_target_bitrate() {
+        let mut o = options(Preset::H264);
+        o.max_video_bitrate_kbps = 8000;
+        assert!(validate_options(&o).is_err());
+        o.use_video_bitrate = true;
+        assert!(validate_options(&o).is_ok());
+    }
     #[test]
     fn unsupported_rate_control_is_not_silently_ignored() {
         for preset in [Preset::ProRes, Preset::Dnxhr] {
