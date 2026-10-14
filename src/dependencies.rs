@@ -195,7 +195,7 @@ fn extract(archive: &Path, directory: &Path, platform: &Platform) -> Result<(), 
         for index in 0..zip.len() {
             let mut entry = zip.by_index(index).map_err(|err| err.to_string())?;
             let Some(path) = entry.enclosed_name() else { return Err("Unsafe FFmpeg ZIP entry path".into()); };
-            let Some(name) = tool_name(path, true) else { continue };
+            let Some(name) = tool_name(&path, true) else { continue };
             if !entry.is_file() { continue; }
             let target = directory.join(name);
             if target.exists() { return Err(format!("Duplicate executable {name} in archive")); }
@@ -264,7 +264,7 @@ fn install_once(tx: &Sender<State>) -> Result<PathBuf, String> {
             return Err(format!("Cannot activate FFmpeg installation: {err}"));
         }
         if backup.exists() { let _ = fs::remove_dir_all(backup); }
-        Ok(directory)
+        Ok(directory.clone())
     })();
     let _ = fs::remove_file(&archive);
     if temp.exists() { let _ = fs::remove_dir_all(&temp); }
