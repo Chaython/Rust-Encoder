@@ -116,18 +116,24 @@ impl NativeVideoPreview {
             }
             // Drop the buffered reader (and thus the pipe) before waiting.
             drop(reader);
-            let result = match child_worker.lock() {
-                Ok(mut child) => {
-                    if stop_worker.load(Ordering::Acquire) {
-                        let _ = child.kill();
+            // Do not hold the Child mutex across a blocking wait: the GUI
+            // needs that same lock to kill the decoder immediately on Stop.
+            let result = loop {
+                let status = match child_worker.lock() {
+                    Ok(mut child) => {
+                        if stop_worker.load(Ordering::Acquire) {
+                            let _ = child.kill();
+                        }
+                        child.try_wait()
                     }
-                    match child.wait() {
-                        Ok(status) if status.success() || stop_worker.load(Ordering::Acquire) => Ok(()),
-                        Ok(status) => Err(format!("Embedded decoder exited with {status}")),
-                        Err(error) => Err(format!("Embedded decoder could not be reaped: {error}")),
-                    }
+                    Err(_) => break Err("Preview process lock poisoned".into()),
+                };
+                match status {
+                    Ok(Some(status)) if status.success() || stop_worker.load(Ordering::Acquire) => break Ok(()),
+                    Ok(Some(status)) => break Err(format!("Embedded decoder exited with {status}")),
+                    Ok(None) => thread::sleep(std::time::Duration::from_millis(25)),
+                    Err(error) => break Err(format!("Embedded decoder could not be reaped: {error}")),
                 }
-                Err(_) => Err("Preview process lock poisoned".into()),
             };
             // An EOF between frames is normal at the natural end of a clip.
             // Process status, not the pipe EOF alone, determines failure.
