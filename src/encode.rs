@@ -52,8 +52,8 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
             return Err("Two-pass requires target bitrate, not constant quality (CRF)".into());
         }
         if options.hardware_encoder != HardwareEncoder::Software
-            || !matches!(options.preset, Preset::H264 | Preset::Vp9) {
-            return Err("Two-pass currently supports only software H.264 or VP9".into());
+            || !matches!(options.preset, Preset::H264 | Preset::H265 | Preset::Vp9) {
+            return Err("Two-pass requires software H.264, H.265 or VP9".into());
         }
     }
     if options.encoder_threads > 32 { return Err("Encoder threads must be 0–32".into()); }
@@ -504,18 +504,39 @@ pub fn build_two_pass_args(
     if !options.two_pass || !matches!(pass, 1 | 2) {
         return Err("Two-pass arguments require pass 1 or 2 and two-pass mode".into());
     }
-    let mut args = build_args(input, temp_output, options)?;
-    // The output argument is always last in build_args.
+    // These passes use a private working directory for x265's stats. Resolve
+    // input/output paths first, so a relative user path still reaches its file.
+    let absolute_input = fs::canonicalize(input)
+        .map_err(|error| format!("Cannot resolve two-pass input: {error}"))?;
+    let absolute_output = if temp_output.is_absolute() {
+        temp_output.to_owned()
+    } else {
+        std::env::current_dir().map_err(|error| error.to_string())?.join(temp_output)
+    };
+    let mut args = build_args(&absolute_input, &absolute_output, options)?;
     args.pop();
-    args.extend([OsString::from("-pass"), OsString::from(pass.to_string()),
-        OsString::from("-passlogfile"), passlog.as_os_str().to_owned()]);
+    if options.preset == Preset::H265 {
+        // Generic FFmpeg -pass can exit successfully while x265 writes EMPTY
+        // stats. Use x265-native pass/stat settings in the private cwd.
+        let suffix = format!("pass={pass}:stats=encode.stats");
+        if let Some(index) = args.iter().position(|item| item == "-x265-params") {
+            args[index + 1].push(":");
+            args[index + 1].push(&suffix);
+        } else {
+            args.push(OsString::from("-x265-params"));
+            args.push(OsString::from(suffix));
+        }
+    } else {
+        args.extend([OsString::from("-pass"), OsString::from(pass.to_string()),
+            OsString::from("-passlogfile"), passlog.as_os_str().to_owned()]);
+    }
     if pass == 1 {
         // Pass 1 decodes/filters video with the selected encoder, but MUST NOT
         // waste resources encoding audio or writing a regular media file.
         args.extend(["-an", "-sn", "-dn", "-f", "null", "-"]
             .into_iter().map(OsString::from));
     } else {
-        args.push(temp_output.as_os_str().to_owned());
+        args.push(absolute_output.as_os_str().to_owned());
     }
     Ok(args)
 }
@@ -525,10 +546,16 @@ pub fn build_two_pass_args(
 fn run_ffmpeg_command(
     id: u64, ffmpeg: &Path, args: &[OsString], tx: &Sender<Event>,
     cancelled: &AtomicBool, report_lines: usize, pass: u8, two_pass: bool,
+    working_directory: Option<&Path>,
 ) -> Result<Vec<String>, String> {
-    let mut child = Command::new(ffmpeg)
-        .args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
-        .spawn().map_err(|error| format!("Cannot launch {}: {error}", ffmpeg.display()))?;
+    let executable = if ffmpeg.is_file() {
+        fs::canonicalize(ffmpeg).unwrap_or_else(|_| ffmpeg.to_owned())
+    } else { ffmpeg.to_owned() };
+    let mut command = Command::new(&executable);
+    command.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    if let Some(directory) = working_directory { command.current_dir(directory); }
+    let mut child = command.spawn().map_err(|error|
+        format!("Cannot launch {}: {error}", executable.display()))?;
     let (progress_tx, progress_rx) = crossbeam_channel::unbounded::<String>();
     let stdout = child.stdout.take().ok_or("Cannot capture FFmpeg progress")?;
     let reader_handle = thread::spawn(move || {
@@ -614,13 +641,22 @@ fn run_job(
             let first = build_two_pass_args(input, &temp, options, 1, &prefix)?;
             let second = build_two_pass_args(input, &temp, options, 2, &prefix)?;
             run_ffmpeg_command(id, &options.ffmpeg, &first, tx,
-                cancelled, report_lines, 1, true)?;
+                cancelled, report_lines, 1, true, Some(&stats.0))?;
             if cancelled.load(Ordering::SeqCst) { return Err("Cancelled".into()); }
+            if options.preset == Preset::H265 {
+                let stats_path = stats.0.join("encode.stats");
+                let stats_size = fs::metadata(&stats_path)
+                    .map_err(|error| format!("x265 did not write pass-one statistics: {error}"))?
+                    .len();
+                if stats_size == 0 {
+                    return Err("x265 pass-one statistics were empty; refusing invalid two-pass output".into());
+                }
+            }
             run_ffmpeg_command(id, &options.ffmpeg, &second, tx,
-                cancelled, report_lines, 2, true)
+                cancelled, report_lines, 2, true, Some(&stats.0))
         } else {
             run_ffmpeg_command(id, &options.ffmpeg, &args, tx,
-                cancelled, report_lines, 1, false)
+                cancelled, report_lines, 1, false, None)
         }
     })();
     let diagnostics = match execute {
@@ -815,7 +851,11 @@ mod tests {
         assert!(validate_options(&o).is_err());
         o.hardware_encoder = HardwareEncoder::Software;
         o.preset = Preset::H265;
-        assert!(validate_options(&o).is_err());
+        assert!(validate_options(&o).is_ok());
+        let hevc_first = build_two_pass_args(&input, &out, &o, 1, &dir.prefix()).unwrap();
+        assert!(hevc_first.windows(2).any(|v| v[0] == "-x265-params"
+            && v[1].to_string_lossy().contains("pass=1:stats=encode.stats")));
+        assert!(!hevc_first.iter().any(|value| value == "-passlogfile"));
         std::fs::remove_file(input).unwrap();
     }
 
