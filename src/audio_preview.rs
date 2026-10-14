@@ -16,6 +16,25 @@ pub const CHANNELS: u16 = 2;
 const SAMPLES_PER_BLOCK: usize = 4096;
 const PCM_BYTES: usize = SAMPLES_PER_BLOCK * 4;
 
+/// Fill a PCM block, retaining a final short (but channel-aligned) block.
+/// read_exact() would discard the last samples at EOF.
+fn read_pcm_block<R: Read>(reader: &mut R, dst: &mut [u8]) -> Result<usize, String> {
+    let mut filled = 0;
+    while filled < dst.len() {
+        match reader.read(&mut dst[filled..]) {
+            Ok(0) => break,
+            Ok(size) => filled += size,
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(format!("PCM pipe read failed: {err}")),
+        }
+    }
+    if filled % (CHANNELS as usize * 4) != 0 {
+        return Err("Truncated interleaved stereo PCM frame".into());
+    }
+    Ok(filled)
+}
+
+
 pub fn audio_args(input: &Path, seek: f64, end: Option<f64>, stream_index: usize)
     -> Result<Vec<OsString>, String> {
     if !input.is_file() { return Err(format!("Audio source does not exist: {}", input.display())); }
@@ -85,7 +104,7 @@ pub struct NativeAudioPreview {
     pub job_id: u64,
     seek: f64,
     // Sink must be destroyed before its OS audio stream.
-    sink: Sink,
+    sink: Arc<Sink>,
     _stream: OutputStream,
     child: Arc<Mutex<Child>>,
     stop: Arc<AtomicBool>,
@@ -99,7 +118,10 @@ impl NativeAudioPreview {
         let args = audio_args(input, seek, end, audio_stream)?;
         let output = OutputStreamBuilder::open_default_stream()
             .map_err(|e| format!("Cannot open system audio output: {e}"))?;
-        let sink = Sink::connect_new(output.mixer());
+        let sink = Arc::new(Sink::connect_new(output.mixer()));
+        // Avoid advancing the playback clock by generating startup silence
+        // before the first PCM buffers are ready.
+        sink.pause();
         let mut child = Command::new(ffmpeg)
             .args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null())
             .spawn().map_err(|e| format!("Cannot start FFmpeg audio decoder: {e}"))?;
@@ -113,22 +135,45 @@ impl NativeAudioPreview {
         let worker_child = Arc::clone(&child);
         let worker_stop = Arc::clone(&stop);
         let worker_completed = Arc::clone(&completed);
+        let worker_sink = Arc::clone(&sink);
+        sink.append(PcmSource {
+            rx, current: Vec::new().into_iter(), completed,
+            underruns: Arc::clone(&underruns),
+        });
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
             let mut bytes = vec![0u8; PCM_BYTES];
-            loop {
+            let mut read_error = None;
+            let mut buffered_blocks = 0;
+            let mut started = false;
+            'decode: loop {
                 if worker_stop.load(Ordering::Acquire) { break; }
-                if reader.read_exact(&mut bytes).is_err() { break; }
-                let mut block: Vec<f32> = bytes.chunks_exact(4)
+                let size = match read_pcm_block(&mut reader, &mut bytes) {
+                    Ok(0) => break,
+                    Ok(size) => size,
+                    Err(error) => { read_error = Some(error); break; }
+                };
+                let mut block: Vec<f32> = bytes[..size].chunks_exact(4)
                     .map(|p| f32::from_le_bytes([p[0], p[1], p[2], p[3]])).collect();
                 loop {
-                    if worker_stop.load(Ordering::Acquire) { break; }
+                    if worker_stop.load(Ordering::Acquire) { break 'decode; }
                     match tx.send_timeout(block, Duration::from_millis(60)) {
-                        Ok(()) => break,
+                        Ok(()) => {
+                            buffered_blocks += 1;
+                            if !started && buffered_blocks >= 3 {
+                                worker_sink.play();
+                                started = true;
+                            }
+                            break;
+                        }
                         Err(SendTimeoutError::Timeout(pending)) => block = pending,
-                        Err(SendTimeoutError::Disconnected(_)) => break,
+                        Err(SendTimeoutError::Disconnected(_)) => break 'decode,
                     }
                 }
+            }
+            // Clips shorter than the prebuffer threshold must also play.
+            if !started && buffered_blocks > 0 && !worker_stop.load(Ordering::Acquire) {
+                worker_sink.play();
             }
             drop(reader);
             let result = loop {
@@ -147,11 +192,10 @@ impl NativeAudioPreview {
                 }
             };
             worker_completed.store(true, Ordering::Release);
-            let _ = done_tx.try_send(result);
-        });
-        sink.append(PcmSource {
-            rx, current: Vec::new().into_iter(), completed,
-            underruns: Arc::clone(&underruns),
+            let _ = done_tx.try_send(match read_error {
+                Some(error) if !worker_stop.load(Ordering::Acquire) => Err(error),
+                _ => result,
+            });
         });
         Ok(Self { job_id, seek, sink, _stream: output, child, stop, finished, underruns })
     }
@@ -198,6 +242,22 @@ mod tests {
         assert!(audio_args(&path, 1.0, None, 32).is_err());
         std::fs::remove_file(path).unwrap();
     }
+    #[test]
+    fn final_short_pcm_block_is_not_lost() {
+        use std::io::Cursor;
+        let mut data = Vec::new();
+        for sample in [0.5f32, -0.5, 0.25, -0.25, 0.75, -0.75] {
+            data.extend_from_slice(&sample.to_le_bytes());
+        }
+        let mut reader = Cursor::new(data.clone());
+        let mut buffer = vec![0u8; PCM_BYTES];
+        assert_eq!(read_pcm_block(&mut reader, &mut buffer).unwrap(), data.len());
+        assert_eq!(&buffer[..data.len()], data.as_slice());
+        assert_eq!(read_pcm_block(&mut reader, &mut buffer).unwrap(), 0);
+        let mut broken = Cursor::new(vec![0u8; 5]);
+        assert!(read_pcm_block(&mut broken, &mut buffer).is_err());
+    }
+
     #[test]
     fn audio_callback_does_not_block_without_samples() {
         let (_tx, rx) = bounded(1);

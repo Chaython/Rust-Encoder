@@ -503,38 +503,42 @@ impl EncoderApp {
         self.native_error = None;
         self.native_audio_error = None;
         let ffmpeg = model::resolve_tool("ffmpeg", &self.settings.ffmpeg_path);
-        match NativeVideoPreview::launch(job_id, &ffmpeg, &input, position, stop) {
-            Ok(session) => {
-                self.native_video = Some(session);
-                self.notice.clear();
-                let selected = self.jobs.iter().find(|job| job.id == job_id);
-                let count = selected.and_then(|job| job.media.as_ref())
-                    .map(|media| media.audio_tracks.len()).unwrap_or(0);
-                if count > 0 && self.settings.audio_stream != -2 {
-                    let index = self.settings.audio_stream.max(0) as usize;
-                    if index < count {
-                        match NativeAudioPreview::launch(
-                            job_id, &ffmpeg, &input, position, stop, index
-                        ) {
-                            Ok(audio) => {
-                                audio.set_volume(self.native_volume);
-                                self.native_audio = Some(audio);
-                            }
-                            Err(e) => self.native_audio_error = Some(e),
-                        }
-                    } else {
-                        self.native_audio_error = Some(format!(
-                            "Audio track {index} is not present; embedded video will play silently."
-                        ));
-                    }
-                }
+        let info = self.jobs.iter().find(|job| job.id == job_id)
+            .and_then(|job| job.media.as_ref());
+        let has_video = info.is_some_and(|media| media.video_codec.is_some());
+        let audio_tracks = info.map(|media| media.audio_tracks.len()).unwrap_or(0);
+        if has_video {
+            match NativeVideoPreview::launch(job_id, &ffmpeg, &input, position, stop) {
+                Ok(session) => self.native_video = Some(session),
+                Err(error) => self.native_error = Some(error),
             }
-            Err(error) => self.native_error = Some(error),
+        }
+        if audio_tracks > 0 && self.settings.audio_stream != -2 {
+            let index = self.settings.audio_stream.max(0) as usize;
+            if index < audio_tracks {
+                match NativeAudioPreview::launch(job_id, &ffmpeg, &input, position, stop, index) {
+                    Ok(audio) => {
+                        audio.set_volume(self.native_volume);
+                        self.native_audio = Some(audio);
+                    }
+                    Err(error) => self.native_audio_error = Some(error),
+                }
+            } else {
+                self.native_audio_error = Some(format!(
+                    "Audio track {index} does not exist in the selected media."
+                ));
+            }
+        }
+        if self.native_video.is_some() || self.native_audio.is_some() {
+            self.notice.clear();
+        } else if self.native_error.is_none() && self.native_audio_error.is_none() {
+            self.native_error = Some("The selected media has no playable video or audio tracks.".into());
         }
     }
 
     fn update_native_video(&mut self, ctx: &egui::Context) {
-        if self.native_video.as_ref().is_some_and(|stream| self.selected_job != Some(stream.job_id)) {
+        if self.native_video.as_ref().is_some_and(|stream| self.selected_job != Some(stream.job_id))
+            || self.native_audio.as_ref().is_some_and(|audio| self.selected_job != Some(audio.job_id)) {
             self.stop_native_video();
         }
         if let Some(audio) = self.native_audio.as_ref() {
@@ -546,6 +550,12 @@ impl EncoderApp {
             }
         }
         let clock = self.native_audio.as_ref().map(NativeAudioPreview::playhead);
+        if self.native_video.is_none() && let Some(time) = clock {
+            // Audio-only files drive the playhead from the output clock.
+            self.preview_seconds = time;
+            self.preview_requested_seconds = time;
+            ctx.request_repaint();
+        }
         let mut ended = None;
         if let Some(stream) = self.native_video.as_ref() {
             let mut frame = self.native_held_frame.take();
@@ -711,9 +721,12 @@ impl EncoderApp {
                 ui.colored_label(egui::Color32::LIGHT_RED, format!("Embedded preview: {error}"));
             }
             ui.horizontal_wrapped(|ui| {
-                let live = self.native_video.as_ref().is_some_and(|p| Some(p.job_id) == self.selected_job);
-                if ui.add_enabled(info.video_codec.is_some(),
-                    egui::Button::new(if live { "▶ Restart embedded A/V" } else { "▶ Embedded A/V (experimental)" })).clicked()
+                let live = self.native_video.as_ref().is_some_and(|p| Some(p.job_id) == self.selected_job)
+                    || self.native_audio.as_ref().is_some_and(|a| Some(a.job_id) == self.selected_job);
+                let playable = info.video_codec.is_some()
+                    || (!info.audio_tracks.is_empty() && self.settings.audio_stream != -2);
+                if ui.add_enabled(playable,
+                    egui::Button::new(if live { "▶ Restart embedded playback" } else { "▶ Embedded playback (experimental)" })).clicked()
                     && let Some(job) = self.jobs.iter().find(|j| Some(j.id) == self.selected_job)
                 {
                     let (position, until) = info.duration_sec.map(|duration| {
@@ -1272,7 +1285,7 @@ impl eframe::App for EncoderApp {
         if self.current.is_some()
             || self.jobs.iter().any(|j| matches!(j.status, JobState::Analyzing))
             || self.preview_loading || self.preview_playing || self.av_player.is_some()
-            || self.native_video.is_some()
+            || self.native_video.is_some() || self.native_audio.is_some()
         {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
         }
