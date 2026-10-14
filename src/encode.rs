@@ -433,7 +433,16 @@ pub fn output_path(input: &Path, o: &EncodeOptions) -> Result<PathBuf, String> {
     Err("Too many output name collisions".into())
 }
 
-fn temporary_output(output: &Path, id: u64) -> Result<PathBuf, String> {
+struct ReservedTemp {
+    path: PathBuf,
+    lock: PathBuf,
+}
+
+impl Drop for ReservedTemp {
+    fn drop(&mut self) { let _ = fs::remove_file(&self.lock); }
+}
+
+fn temporary_output(output: &Path, id: u64) -> Result<ReservedTemp, String> {
     let parent = output.parent().ok_or("Missing output parent")?;
     let stem = output.file_stem().and_then(|v| v.to_str()).unwrap_or("media");
     let ext = output.extension().and_then(|v| v.to_str()).unwrap_or("mkv");
@@ -441,7 +450,23 @@ fn temporary_output(output: &Path, id: u64) -> Result<PathBuf, String> {
         let path = parent.join(format!(".{stem}.rust-encoder-{id}-{n}.partial.{ext}"));
         match fs::symlink_metadata(&path) {
             Ok(_) => continue,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let lock = path.with_extension(format!("{ext}.lock"));
+                match OpenOptions::new().write(true).create_new(true).open(&lock) {
+                    Ok(_) => {
+                        // Recheck after claiming the lock: no preexisting output
+                        // can be silently overwritten through a racing creator.
+                        if fs::symlink_metadata(&path).is_ok() {
+                            let _ = fs::remove_file(&lock);
+                            continue;
+                        }
+                        return Ok(ReservedTemp { path, lock });
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => return Err(format!(
+                        "Cannot reserve temporary output {}: {error}", path.display())),
+                }
+            },
             Err(error) => return Err(format!(
                 "Cannot inspect temporary output path {}: {error}", path.display())),
         }
@@ -694,17 +719,18 @@ fn run_job(
 ) -> Result<(), String> {
     if cancelled.load(Ordering::SeqCst) { return Err("Cancelled".into()); }
     let output = output_path(input, options)?;
-    let temp = temporary_output(&output, id)?;
+    let reserved = temporary_output(&output, id)?;
+    let temp = &reserved.path;
     // Always validate the command BEFORE broadcasting Started.
-    let args = build_args(input, &temp, options)?;
+    let args = build_args(input, temp, options)?;
     let _ = tx.send(Event::Started { id, output: output.clone() });
     let report_lines = if options.preset.report() { 4096 } else { 64 };
     let execute = (|| -> Result<Vec<String>, String> {
         if options.two_pass {
-            let stats = PassLogDir::create(&temp, id)?;
+            let stats = PassLogDir::create(temp, id)?;
             let prefix = stats.prefix();
-            let first = build_two_pass_args(input, &temp, options, 1, &prefix)?;
-            let second = build_two_pass_args(input, &temp, options, 2, &prefix)?;
+            let first = build_two_pass_args(input, temp, options, 1, &prefix)?;
+            let second = build_two_pass_args(input, temp, options, 2, &prefix)?;
             run_ffmpeg_command(id, &options.ffmpeg, &first, tx,
                 cancelled, report_lines, 1, true, Some(&stats.0))?;
             if cancelled.load(Ordering::SeqCst) { return Err("Cancelled".into()); }
@@ -727,20 +753,20 @@ fn run_job(
     let diagnostics = match execute {
         Ok(lines) => lines,
         Err(error) => {
-            let _ = fs::remove_file(&temp);
+            let _ = fs::remove_file(temp);
             return Err(error);
         }
     };
     if cancelled.load(Ordering::SeqCst) {
-        let _ = fs::remove_file(&temp);
+        let _ = fs::remove_file(temp);
         return Err("Cancelled".into());
     }
     if options.preset.report() {
-        fs::write(&temp, format!("Rust Encoder analysis: {:?}\nInput: {}\n\n{}\n",
+        fs::write(temp, format!("Rust Encoder analysis: {:?}\nInput: {}\n\n{}\n",
             options.preset, input.display(), diagnostics.join("\n")))
             .map_err(|error| format!("Could not save media analysis report: {error}"))?;
     }
-    let destination = finalize_with_retry(&temp, input, options, &output)?;
+    let destination = finalize_with_retry(temp, input, options, &output)?;
     let _ = tx.send(Event::Completed { id, output: destination });
     Ok(())
 }
@@ -791,6 +817,22 @@ mod tests {
         assert_ne!(path, tmp.join("sample.mp4"));
         assert_eq!(path.extension().and_then(|x| x.to_str()), Some("mp4"));
     }
+    #[test]
+    fn temporary_output_reservations_are_exclusive() {
+        let dir = std::env::temp_dir().join(format!(
+            "rust-encoder-reservation-{}-{:?}", std::process::id(), std::thread::current().id()));
+        fs::create_dir_all(&dir).unwrap();
+        let output = dir.join("movie.mp4");
+        let first = temporary_output(&output, 77).unwrap();
+        let second = temporary_output(&output, 77).unwrap();
+        assert_ne!(first.path, second.path);
+        assert!(first.lock.exists());
+        let lock = first.lock.clone();
+        drop(first);
+        assert!(!lock.exists());
+        drop(second);
+        fs::remove_dir_all(dir).unwrap();
+    }
     #[cfg(unix)]
     #[test]
     fn dangling_symlink_temporary_name_is_not_reused() {
@@ -802,7 +844,7 @@ mod tests {
         let occupied = dir.join(".movie.rust-encoder-818-0.partial.mp4");
         symlink(dir.join("missing-target"), &occupied).unwrap();
         let temp = temporary_output(&output, 818).unwrap();
-        assert_eq!(temp, dir.join(".movie.rust-encoder-818-1.partial.mp4"));
+        assert_eq!(temp.path, dir.join(".movie.rust-encoder-818-1.partial.mp4"));
         assert!(fs::symlink_metadata(&occupied).unwrap().file_type().is_symlink());
         fs::remove_dir_all(dir).unwrap();
     }
@@ -837,12 +879,12 @@ mod tests {
         // Simulate a second job claiming the name during encoding.
         fs::write(&initially_free, b"other job").unwrap();
         let temp = temporary_output(&initially_free, 900).unwrap();
-        fs::write(&temp, b"encoded payload").unwrap();
-        let new_destination = finalize_with_retry(&temp, &input, &o, &initially_free).unwrap();
+        fs::write(&temp.path, b"encoded payload").unwrap();
+        let new_destination = finalize_with_retry(&temp.path, &input, &o, &initially_free).unwrap();
         assert_ne!(new_destination, initially_free);
         assert_eq!(fs::read(&initially_free).unwrap(), b"other job");
         assert_eq!(fs::read(&new_destination).unwrap(), b"encoded payload");
-        assert!(!temp.exists());
+        assert!(!temp.path.exists());
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]
