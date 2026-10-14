@@ -7,6 +7,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: rust-encoder-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 
@@ -71,3 +74,76 @@ jobs:
           name: rust-encoder-${{ runner.os }}
           path: dist/*.zip
           if-no-files-found: error
+  release:
+    name: Publish rolling release
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rust-encoder-*
+          path: release-assets
+          merge-multiple: true
+      - name: Verify bundles and generate checksums
+        shell: python
+        run: |
+          from hashlib import sha256
+          from pathlib import Path
+          from zipfile import ZipFile
+          root = Path('release-assets')
+          expected = {
+              'rust-encoder-windows.zip': 'rust-encoder.exe',
+              'rust-encoder-linux.zip': 'rust-encoder',
+              'rust-encoder-macos.zip': 'rust-encoder',
+          }
+          archives = {p.name: p for p in root.glob('*.zip')}
+          if archives.keys() != expected.keys():
+              raise SystemExit(f'Missing or unexpected platform ZIPs: {sorted(archives)}')
+          sums = []
+          for name, executable in expected.items():
+              path = archives[name]
+              with ZipFile(path) as bundle:
+                  needed = {executable, 'README.md', 'LICENSE', 'TESTING.md'}
+                  if not needed.issubset(bundle.namelist()):
+                      raise SystemExit(f'Incomplete archive {name}: {needed - set(bundle.namelist())}')
+                  if bundle.testzip() is not None:
+                      raise SystemExit(f'Corrupt archive: {name}')
+                  if bundle.getinfo(executable).file_size == 0:
+                      raise SystemExit(f'Empty executable in {name}')
+              digest = sha256(path.read_bytes()).hexdigest()
+              sums.append(f'{digest}  {name}')
+              print(f'Verified {name} ({path.stat().st_size} bytes)')
+          (root / 'SHA256SUMS.txt').write_text('\n'.join(sums) + '\n')
+      - name: Publish or update rolling prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<EOF
+          Rolling development build from \`main\`, commit \`${GITHUB_SHA}\`.
+          
+          Portable Windows, Linux, and macOS executables are attached with SHA-256 checksums.
+          FFmpeg/FFprobe and optional FFplay are external dependencies and are not bundled.
+          These builds are not installers, signed, or notarized.
+          EOF
+          if gh release view rolling >/dev/null 2>&1; then
+            # Keep the existing release and its URL; overwrite assets only after all builds pass.
+            gh release upload rolling release-assets/*.zip release-assets/SHA256SUMS.txt --clobber
+            gh release edit rolling --title 'Rust Encoder (Rolling)' --notes-file release-notes.md --prerelease
+            # Move the reusable tag only after the new release assets upload successfully.
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/rolling" -f sha="${GITHUB_SHA}" -F force=true >/dev/null
+          else
+            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/rolling" >/dev/null 2>&1; then
+              gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/rolling" -f sha="${GITHUB_SHA}" -F force=true >/dev/null
+            else
+              gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref='refs/tags/rolling' -f sha="${GITHUB_SHA}" >/dev/null
+            fi
+            gh release create rolling release-assets/*.zip release-assets/SHA256SUMS.txt \
+              --title 'Rust Encoder (Rolling)' --notes-file release-notes.md --prerelease
+          fi
