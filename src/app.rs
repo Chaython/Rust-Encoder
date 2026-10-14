@@ -1451,6 +1451,17 @@ impl EncoderApp {
                                 changed |= ui.selectable_value(&mut self.settings.audio_stream, n as i32, name).changed();
                             }
                         });
+                    if self.settings.audio_stream == -2 {
+                        // Removing audio must also remove any processing that requires it.
+                        if self.settings.normalize_audio || self.settings.audio_channels != 0
+                            || self.settings.audio_sample_rate != 0 || self.settings.audio_gain_db != 0.0 {
+                            self.settings.normalize_audio = false;
+                            self.settings.audio_channels = 0;
+                            self.settings.audio_sample_rate = 0;
+                            self.settings.audio_gain_db = 0.0;
+                            changed = true;
+                        }
+                    }
                 }
                 if self.settings.preset.video() || matches!(self.settings.preset,
                     Preset::ExtractSrt | Preset::ExtractAss) {
