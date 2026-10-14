@@ -29,10 +29,10 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
         return Err("Explicit bit depth is only available for H.264, H.265, AV1 and VP9".into());
     }
     if options.output_bit_depth == 10 && (
-        !matches!(options.preset, Preset::H265 | Preset::Av1)
+        !matches!(options.preset, Preset::H265 | Preset::Av1 | Preset::Vp9)
         || options.hardware_encoder != HardwareEncoder::Software
     ) {
-        return Err("10-bit output currently requires software HEVC or AV1 encoding".into());
+        return Err("10-bit output requires software HEVC, AV1 or VP9 encoding".into());
     }
     if options.color_signal != ColorSignal::Automatic {
         if !matches!(options.preset, Preset::H264 | Preset::H265 | Preset::Av1 | Preset::Vp9) {
@@ -343,6 +343,8 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
                 }
                 Preset::Vp9 => {
                     arg!("-c:v"); arg!("libvpx-vp9");
+                    // VP9 Profile 2 is required for 10-bit 4:2:0 output.
+                    if o.output_bit_depth == 10 { arg!("-profile:v"); arg!("2"); }
                     arg!("-deadline"); arg!("good");
                     arg!("-cpu-used"); arg!(["4", "2", "1"][o.encoder_speed as usize]);
                     if bitrate { arg!("-b:v"); arg!(&format!("{}k", o.video_bitrate_kbps)); }
@@ -1237,6 +1239,24 @@ mod tests {
             o.use_video_bitrate = true;
             assert!(validate_options(&o).is_ok());
         }
+    }
+    #[test]
+    fn vp9_profile_two_is_used_for_ten_bit_encoding() {
+        let dir = std::env::temp_dir().join(format!(
+            "rust-encoder-vp9-10bit-{}-{:?}",
+            std::process::id(), std::thread::current().id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("video.mkv");
+        fs::write(&input, b"fixture").unwrap();
+        let mut settings = options(Preset::Vp9);
+        settings.output_bit_depth = 10;
+        let args = build_args(&input, &dir.join("out.webm"), &settings).unwrap();
+        assert!(args.windows(2).any(|pair| pair[0] == "-profile:v" && pair[1] == "2"));
+        assert!(args.windows(2).any(|pair| pair[0] == "-pix_fmt" && pair[1] == "yuv420p10le"));
+        settings.output_bit_depth = 8;
+        let args = build_args(&input, &dir.join("out.webm"), &settings).unwrap();
+        assert!(!args.iter().any(|argument| argument == "-profile:v"));
+        fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn invalid_hardware_codec_rejected() {
