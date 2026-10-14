@@ -612,7 +612,9 @@ impl EncoderApp {
                                 else {
                                     job.media.as_ref()
                                         .and_then(|m| encode::expected_duration(m, &job.options))
-                                        .map(|d| (job.elapsed_sec / d).clamp(0.0, 1.0) as f32)
+                                        .map(|d| if job.options.two_pass {
+                                            (((job.pass as f64 - 1.0) + job.elapsed_sec / d) / 2.0).clamp(0.0, 1.0) as f32
+                                        } else { (job.elapsed_sec / d).clamp(0.0, 1.0) as f32 })
                                         .unwrap_or(0.0)
                                 };
                             let label = if job.speed.is_empty() { "Processing".to_owned() }
