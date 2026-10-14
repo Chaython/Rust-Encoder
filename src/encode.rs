@@ -456,11 +456,20 @@ fn temporary_output(output: &Path, id: u64) -> Result<ReservedTemp, String> {
                     Ok(_) => {
                         // Recheck after claiming the lock: no preexisting output
                         // can be silently overwritten through a racing creator.
-                        if fs::symlink_metadata(&path).is_ok() {
-                            let _ = fs::remove_file(&lock);
-                            continue;
+                        match fs::symlink_metadata(&path) {
+                            Ok(_) => {
+                                let _ = fs::remove_file(&lock);
+                                continue;
+                            }
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                                return Ok(ReservedTemp { path, lock });
+                            }
+                            Err(error) => {
+                                let _ = fs::remove_file(&lock);
+                                return Err(format!(
+                                    "Cannot inspect reserved output {}: {error}", path.display()));
+                            }
                         }
-                        return Ok(ReservedTemp { path, lock });
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                     Err(error) => return Err(format!(
