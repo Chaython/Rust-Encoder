@@ -273,3 +273,33 @@ fn av1_main10_pq_sequence_metadata_roundtrip() {
     }
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn vp9_ten_bit_profile_two_roundtrip() {
+    if !ffmpeg_available() { eprintln!("Skipping VP9 10-bit test: FFmpeg unavailable"); return; }
+    let encoders = Command::new("ffmpeg").args(["-hide_banner", "-encoders"]).output().unwrap();
+    if !String::from_utf8_lossy(&encoders.stdout).contains("libvpx-vp9") {
+        eprintln!("Skipping VP9 10-bit test: libvpx-vp9 unavailable");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("rust-encoder-vp9-profile2-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let input = fixture(&dir);
+    let mut settings = options(Preset::Vp9);
+    settings.output_bit_depth = 10;
+    settings.encoder_speed = 0;
+    settings.audio_stream = -2;
+    let output = dir.join("profile2.webm");
+    command_ok(Command::new("ffmpeg").args(encode::build_args(&input, &output, &settings).unwrap()));
+    let probe = Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "v:0", "-show_entries",
+            "stream=codec_name,profile,pix_fmt", "-of", "default=noprint_wrappers=1"])
+        .arg(&output).output().unwrap();
+    assert!(probe.status.success());
+    let metadata = String::from_utf8_lossy(&probe.stdout);
+    for field in ["codec_name=vp9", "profile=Profile 2", "pix_fmt=yuv420p10le"] {
+        assert!(metadata.contains(field), "Expected {field}:\n{metadata}");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
