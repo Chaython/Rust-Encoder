@@ -3,14 +3,16 @@
 use crate::model;
 use sha2::{Digest, Sha256};
 use crossbeam_channel::Sender;
-use serde::Deserialize;
 use std::{
     fs::{self, File}, io::{self, Read, Write}, path::{Path, PathBuf},
     process::Command, time::Duration,
 };
 
-const OWNER: &str = "binmgr";
-const REPO: &str = "ffmpeg";
+const RELEASE_ASSETS: &str = "https://github.com/binmgr/ffmpeg/releases/latest/download";
+
+fn release_asset_url(name: &str) -> String {
+    format!("{RELEASE_ASSETS}/{name}")
+}
 const MAX_ARCHIVE_BYTES: u64 = 400 * 1024 * 1024;
 const MAX_TOOL_BYTES: u64 = 220 * 1024 * 1024;
 
@@ -23,16 +25,6 @@ pub enum State {
     Failed(String),
 }
 
-#[derive(Deserialize)]
-struct Release {
-    tag_name: String,
-    assets: Vec<Asset>,
-}
-#[derive(Deserialize)]
-struct Asset {
-    name: String,
-    browser_download_url: String,
-}
 struct Platform {
     asset: &'static str,
     windows: bool,
@@ -83,12 +75,6 @@ pub fn missing_tools(ffmpeg: &str, ffprobe: &str) -> Vec<&'static str> {
             (!usable(&model::resolve_tool(name, configured))).then_some(name)
         })
         .collect()
-}
-
-fn asset<'a>(release: &'a Release, name: &str) -> Result<&'a str, String> {
-    release.assets.iter().find(|asset| asset.name == name)
-        .map(|a| a.browser_download_url.as_str())
-        .ok_or_else(|| format!("Release {} has no asset {name}", release.tag_name))
 }
 
 fn agent() -> ureq::Agent {
@@ -248,18 +234,17 @@ fn install_once(tx: &Sender<State>) -> Result<PathBuf, String> {
         // Refuse stale staging directories instead of following existing symlinks.
         fs::create_dir(&temp).map_err(|e| format!("Cannot stage FFmpeg files: {e}"))?;
         let agent = agent();
-        let json = read_small(&agent,
-            &format!("https://api.github.com/repos/{OWNER}/{REPO}/releases/latest"),
-            512 * 1024)?;
-        let release: Release = serde_json::from_slice(&json)
-            .map_err(|err| format!("Invalid FFmpeg release metadata: {err}"))?;
-        let checksum_url = asset(&release, "SHA256SUMS.txt")?;
-        let checksums = read_small(&agent, checksum_url, 128 * 1024)?;
+        // The stable release download endpoint follows GitHub's redirects
+        // without making unauthenticated REST API calls (which return HTTP 403
+        // when a shared-IP API rate limit is exhausted).
+        let checksums = read_small(
+            &agent, &release_asset_url("SHA256SUMS.txt"), 128 * 1024
+        )?;
         let checksums = String::from_utf8(checksums)
             .map_err(|err| format!("Invalid FFmpeg checksum text: {err}"))?;
         let expected = checksum(&checksums, platform.asset)?;
-        tx.send(State::Downloading(format!("Downloading verified FFmpeg ({})…", release.tag_name))).ok();
-        let actual = download(&agent, asset(&release, platform.asset)?, &archive)?;
+        tx.send(State::Downloading("Downloading verified FFmpeg (latest release)…".into())).ok();
+        let actual = download(&agent, &release_asset_url(platform.asset), &archive)?;
         if actual != expected { return Err("FFmpeg SHA-256 checksum mismatch; refusing to install".into()); }
         tx.send(State::Extracting).ok();
         extract(&archive, &temp, &platform)?;
@@ -314,6 +299,18 @@ pub fn start_check(ffmpeg: String, ffprobe: String, tx: Sender<State>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stable_latest_asset_urls_require_no_github_rest_api_request() {
+        assert_eq!(
+            release_asset_url("ffmpeg-windows-amd64.zip"),
+            "https://github.com/binmgr/ffmpeg/releases/latest/download/ffmpeg-windows-amd64.zip"
+        );
+        assert_eq!(
+            release_asset_url("SHA256SUMS.txt"),
+            "https://github.com/binmgr/ffmpeg/releases/latest/download/SHA256SUMS.txt"
+        );
+    }
 
     #[test]
     fn github_api_uses_json_accept_not_binary_asset_accept() {
