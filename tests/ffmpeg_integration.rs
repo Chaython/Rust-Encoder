@@ -7,7 +7,7 @@ use std::{fs, path::{Path, PathBuf}, process::Command,
 fn options(preset: Preset) -> EncodeOptions {
     EncodeOptions {
         preset, quality: 25,
-        use_video_bitrate: false, video_bitrate_kbps: 4000,
+        use_video_bitrate: false, two_pass: false, video_bitrate_kbps: 4000,
         max_video_bitrate_kbps: 0, encoder_speed: 1, encoder_threads: 0,
         keyframe_interval: 0, faststart: true,
         target_width: 0, audio_bitrate_kbps: 128,
@@ -154,5 +154,40 @@ fn embedded_audio_pcm_decoder_produces_real_stereo_samples() {
     assert!(output.stdout.chunks_exact(4).take(1024)
         .map(|x| f32::from_le_bytes(x.try_into().unwrap()))
         .any(|sample| sample.is_finite() && sample.abs() > 0.00001));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn h264_two_pass_produces_valid_file_and_cleans_logs() {
+    if !ffmpeg_available() { eprintln!("Skipping two-pass FFmpeg test"); return; }
+    let dir = std::env::temp_dir().join(format!("rust-encoder-two-pass-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let input = fixture(&dir);
+    let mut options = options(Preset::H264);
+    options.use_video_bitrate = true;
+    options.video_bitrate_kbps = 500;
+    options.two_pass = true;
+    let (tx, rx) = crossbeam_channel::unbounded();
+    encode::start_job(803, input, options, tx,
+        Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+    let mut last_pass = 0;
+    let path = loop {
+        match rx.recv_timeout(Duration::from_secs(45)).expect("Two-pass encode timed out") {
+            encode::Event::Progress { pass, .. } => { last_pass = last_pass.max(pass); }
+            encode::Event::Completed { output, .. } => break output,
+            encode::Event::Failed { message, .. } => panic!("Two-pass failed: {message}"),
+            encode::Event::Cancelled { .. } => panic!("Unexpected two-pass cancellation"),
+            _ => {}
+        }
+    };
+    assert_eq!(last_pass, 2);
+    assert!(path.is_file());
+    assert!(fs::metadata(&path).unwrap().len() > 1000);
+    let probe = rust_encoder::media::probe_file(Path::new("ffprobe"), &path).unwrap();
+    assert!(probe.video_codec.is_some());
+    assert!(!fs::read_dir(&dir).unwrap().any(|entry| {
+        entry.unwrap().file_name().to_string_lossy().starts_with(".rust-encoder-pass-")
+    }));
     fs::remove_dir_all(dir).unwrap();
 }

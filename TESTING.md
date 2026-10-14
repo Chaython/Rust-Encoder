@@ -78,3 +78,9 @@ No realtime video player, synchronized waveform/editor timeline, bulk image sequ
 - Manually verify divider drag, settings persistence, Reset layout, filter changes while selecting/removing/retrying/running jobs, and preview size on high-DPI monitors.
 
 - Workspace profile resizing also tests a Windows-safe atomic settings replacement; the old file is never unlinked before a new saved copy is successfully renamed.
+
+## True FFmpeg two-pass bitrate encoding
+- Two-pass mode is restricted to software H.264 or VP9 and requires a target bitrate. Hardware, CRF, HEVC and non-video operations reject it explicitly.
+- Pass 1 uses the chosen video encoder and filters but disables audio/subtitles and discards video into the null muxer; Pass 2 uses saved encoder statistics and writes the only final output.
+- The application keeps the statistics in a job-unique directory and removes it on completion, failure, or cancellation. Progress is labeled Pass 1/2 or Pass 2/2.
+- Linux FFmpeg integration verifies both passes run, checks the output with FFprobe, and confirms passlogs do not remain.

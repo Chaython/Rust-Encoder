@@ -123,6 +123,7 @@ pub struct Settings {
     pub preset: Preset,
     pub quality: u8,
     pub use_video_bitrate: bool,
+    pub two_pass: bool,
     pub video_bitrate_kbps: u32,
     pub max_video_bitrate_kbps: u32, // 0 = no maximum
     pub encoder_speed: u8, // 0 faster, 1 balanced, 2 better compression
@@ -169,7 +170,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             preset: Preset::H264, quality: 23,
-            use_video_bitrate: false, video_bitrate_kbps: 4000,
+            use_video_bitrate: false, two_pass: false, video_bitrate_kbps: 4000,
             max_video_bitrate_kbps: 0, encoder_speed: 1, encoder_threads: 0,
             keyframe_interval: 0, faststart: true, target_width: 0,
             audio_bitrate_kbps: 192, start_seconds: 0.0, end_seconds: 0.0,
@@ -236,6 +237,7 @@ impl Settings {
         EncodeOptions {
             preset: self.preset,
             quality: self.quality, use_video_bitrate: self.use_video_bitrate,
+            two_pass: self.two_pass,
             video_bitrate_kbps: self.video_bitrate_kbps,
             max_video_bitrate_kbps: self.max_video_bitrate_kbps,
             encoder_speed: self.encoder_speed, encoder_threads: self.encoder_threads,

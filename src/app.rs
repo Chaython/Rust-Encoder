@@ -55,6 +55,7 @@ struct Job {
     status: JobState,
     elapsed_sec: f64,
     speed: String,
+    pass: u8,
 }
 
 struct Running {
@@ -180,6 +181,7 @@ impl EncoderApp {
                 status: JobState::Analyzing,
                 elapsed_sec: 0.0,
                 speed: String::new(),
+            pass: 1,
             });
             self.selected_job.get_or_insert(id);
             media::probe_async(id, probe_tool.clone(), path, self.sender.clone());
@@ -328,10 +330,11 @@ impl EncoderApp {
                         job.output = Some(output);
                     }
                 }
-                Event::Progress { id, elapsed_sec, speed } => {
+                Event::Progress { id, elapsed_sec, speed, pass } => {
                     if let Some(job) = self.jobs.iter_mut().find(|j| j.id == id) {
                         job.elapsed_sec = elapsed_sec;
                         job.speed = speed;
+                        job.pass = pass;
                     }
                 }
                 Event::Completed { id, output } => {
@@ -506,7 +509,9 @@ impl EncoderApp {
                                 if matches!(job.status, JobState::Running | JobState::Cancelling) {
                                     let fraction = job.media.as_ref()
                                         .and_then(|m| encode::expected_duration(m, &job.options))
-                                        .map(|d| (job.elapsed_sec / d).clamp(0.0, 1.0) as f32)
+                                        .map(|d| if job.options.two_pass {
+                                        (((job.pass as f64 - 1.0) + job.elapsed_sec / d) / 2.0).clamp(0.0, 1.0) as f32
+                                    } else { (job.elapsed_sec / d).clamp(0.0, 1.0) as f32 })
                                         .unwrap_or(0.0);
                                     ui.add(egui::ProgressBar::new(fraction).desired_width(56.0));
                                 }
@@ -1125,6 +1130,17 @@ impl EncoderApp {
                                 true, "Target bitrate").changed();
                         });
                         if self.settings.use_video_bitrate {
+                            let allowed = matches!(self.settings.preset, Preset::H264 | Preset::Vp9)
+                                && self.settings.hardware_encoder == HardwareEncoder::Software;
+                            changed |= ui.add_enabled(allowed,
+                                egui::Checkbox::new(&mut self.settings.two_pass,
+                                    "Two-pass bitrate encoding (slower, more precise)"
+                                )).changed();
+                            if !allowed && self.settings.two_pass {
+                                self.settings.two_pass = false;
+                                changed = true;
+                            }
+                            if !allowed { ui.small("Two-pass needs software H.264 or VP9."); }
                             ui.label("Target video bitrate (kb/s)");
                             changed |= ui.add(egui::DragValue::new(&mut self.settings.video_bitrate_kbps)
                                 .range(100..=100_000).speed(50.0)).changed();
@@ -1145,6 +1161,10 @@ impl EncoderApp {
                                 ui.small(format!("Estimated output size: ~{mb:.1} MB for selected source"));
                             }
                         } else {
+                            if self.settings.two_pass {
+                                self.settings.two_pass = false;
+                                changed = true;
+                            }
                             ui.label("Constant quality (lower CRF = higher quality)");
                             changed |= ui.add(egui::Slider::new(&mut self.settings.quality, 0..=51)).changed();
                         }

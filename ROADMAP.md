@@ -45,3 +45,6 @@ See [FEATURE_PARITY.md](FEATURE_PARITY.md) for a more granular list. A checked e
 - [x] Virtualized compact file list renders only visible rows and supports 10,000-file search regression testing
 - [ ] Measure frame rendering time and memory with thousands of actual probed files, preserve keyboard focus across pane resizing
 - [ ] True two-pass encoding, encoder capability detection, measurable speed benchmarks and a media corpus
+
+- [x] FFmpeg two-pass H.264/VP9 target bitrate with cancellable passes, isolated stats and cleanup
+- [ ] Extend tested two-pass support to HEVC and AV1 via encoder-specific pass handling

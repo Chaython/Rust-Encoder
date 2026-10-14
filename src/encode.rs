@@ -13,7 +13,7 @@ pub enum Event {
     PreviewReady { id: u64, seek_ms: u64, result: Result<crate::media::Thumbnail, String> },
     WaveformReady { id: u64, result: Result<crate::media::Thumbnail, String> },
     Started { id: u64, output: PathBuf },
-    Progress { id: u64, elapsed_sec: f64, speed: String },
+    Progress { id: u64, elapsed_sec: f64, speed: String, pass: u8 },
     Completed { id: u64, output: PathBuf },
     Failed { id: u64, message: String },
     Cancelled { id: u64 },
@@ -22,6 +22,15 @@ pub enum Event {
 pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     if options.quality > 51 { return Err("Quality (CRF) must be between 0 and 51".into()); }
     if options.encoder_speed > 2 { return Err("Encoder speed must be 0–2".into()); }
+    if options.two_pass {
+        if !options.use_video_bitrate {
+            return Err("Two-pass requires target bitrate, not constant quality (CRF)".into());
+        }
+        if options.hardware_encoder != HardwareEncoder::Software
+            || !matches!(options.preset, Preset::H264 | Preset::Vp9) {
+            return Err("Two-pass currently supports only software H.264 or VP9".into());
+        }
+    }
     if options.encoder_threads > 32 { return Err("Encoder threads must be 0–32".into()); }
     if options.keyframe_interval > 1000 { return Err("Keyframe interval must be 0–1000".into()); }
     if options.use_video_bitrate && options.preset.video() {
@@ -413,16 +422,66 @@ pub fn start_job(id: u64, input: PathBuf, options: EncodeOptions, tx: Sender<Eve
     });
 }
 
-fn run_job(id: u64, input: &Path, options: &EncodeOptions, tx: &Sender<Event>, cancelled: &AtomicBool) -> Result<(), String> {
-    if cancelled.load(Ordering::SeqCst) { return Err("Cancelled".into()); }
-    let output = output_path(input, options)?;
-    let temp = temporary_output(&output, id)?;
-    let args = build_args(input, &temp, options)?;
-    let mut child = Command::new(&options.ffmpeg)
-        .args(&args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
-        .spawn().map_err(|e| format!("Cannot launch {}: {e}", options.ffmpeg.display()))?;
-    let _ = tx.send(Event::Started { id, output: output.clone() });
+/// Create an isolated statistics directory with an exclusive mkdir, not a
+/// reusable global passlog. Drop removes files even if a pass fails or is
+/// cancelled; the final output remains untouched until both passes succeed.
+struct PassLogDir(PathBuf);
 
+impl PassLogDir {
+    fn create(output: &Path, id: u64) -> Result<Self, String> {
+        let parent = output.parent().ok_or("No output directory for pass statistics")?;
+        for n in 0..1000 {
+            let candidate = parent.join(format!(
+                ".rust-encoder-pass-{}-{}-{n}", std::process::id(), id
+            ));
+            match fs::create_dir(&candidate) {
+                Ok(()) => return Ok(Self(candidate)),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {},
+                Err(error) => return Err(format!("Cannot create pass directory: {error}")),
+            }
+        }
+        Err("Cannot find an unused two-pass statistics directory".into())
+    }
+
+    fn prefix(&self) -> PathBuf { self.0.join("encode") }
+}
+
+impl Drop for PassLogDir {
+    fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+}
+
+pub fn build_two_pass_args(
+    input: &Path, temp_output: &Path, options: &EncodeOptions,
+    pass: u8, passlog: &Path,
+) -> Result<Vec<OsString>, String> {
+    if !options.two_pass || !matches!(pass, 1 | 2) {
+        return Err("Two-pass arguments require pass 1 or 2 and two-pass mode".into());
+    }
+    let mut args = build_args(input, temp_output, options)?;
+    // The output argument is always last in build_args.
+    args.pop();
+    args.extend([OsString::from("-pass"), OsString::from(pass.to_string()),
+        OsString::from("-passlogfile"), passlog.as_os_str().to_owned()]);
+    if pass == 1 {
+        // Pass 1 decodes/filters video with the selected encoder, but MUST NOT
+        // waste resources encoding audio or writing a regular media file.
+        args.extend(["-an", "-sn", "-dn", "-f", "null", "-"]
+            .into_iter().map(OsString::from));
+    } else {
+        args.push(temp_output.as_os_str().to_owned());
+    }
+    Ok(args)
+}
+
+/// One FFmpeg pass. Both stdout progress and stderr diagnostics are drained
+/// concurrently, so noisy encoder logs cannot deadlock on a full pipe.
+fn run_ffmpeg_command(
+    id: u64, ffmpeg: &Path, args: &[OsString], tx: &Sender<Event>,
+    cancelled: &AtomicBool, report_lines: usize, pass: u8, two_pass: bool,
+) -> Result<Vec<String>, String> {
+    let mut child = Command::new(ffmpeg)
+        .args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .spawn().map_err(|error| format!("Cannot launch {}: {error}", ffmpeg.display()))?;
     let (progress_tx, progress_rx) = crossbeam_channel::unbounded::<String>();
     let stdout = child.stdout.take().ok_or("Cannot capture FFmpeg progress")?;
     let reader_handle = thread::spawn(move || {
@@ -435,13 +494,12 @@ fn run_job(id: u64, input: &Path, options: &EncodeOptions, tx: &Sender<Event>, c
     });
     let stderr = child.stderr.take().ok_or("Cannot capture FFmpeg diagnostics")?;
     let errors = Arc::new(Mutex::new(VecDeque::<String>::with_capacity(64)));
-    let error_sink = Arc::clone(&errors);
-    let report_lines = if options.preset.report() { 4096 } else { 64 };
+    let sink = Arc::clone(&errors);
     let stderr_handle = thread::spawn(move || {
         for line in BufReader::new(stderr).lines() {
             match line {
                 Ok(line) => {
-                    if let Ok(mut tail) = error_sink.lock() {
+                    if let Ok(mut tail) = sink.lock() {
                         if tail.len() == report_lines { tail.pop_front(); }
                         tail.push_back(line.chars().take(4096).collect());
                     }
@@ -457,38 +515,86 @@ fn run_job(id: u64, input: &Path, options: &EncodeOptions, tx: &Sender<Event>, c
             let status = child.wait().map_err(|e| format!("Cannot reap cancelled FFmpeg: {e}"))?;
             break (status, true);
         }
-        if let Ok(line) = progress_rx.recv_timeout(Duration::from_millis(125)) {
-            if parse_progress_line(&line, &mut progress) {
-                let _ = tx.send(Event::Progress { id, elapsed_sec: progress.elapsed_sec, speed: progress.speed.clone() });
-            }
+        if let Ok(line) = progress_rx.recv_timeout(Duration::from_millis(125))
+            && parse_progress_line(&line, &mut progress) {
+            let speed = if two_pass {
+                format!("Pass {pass}/2 · {}", progress.speed)
+            } else { progress.speed.clone() };
+            let _ = tx.send(Event::Progress {
+                id, elapsed_sec: progress.elapsed_sec, speed, pass
+            });
         }
         match child.try_wait() {
             Ok(Some(status)) => break (status, false),
-            Ok(None) => {}
-            Err(e) => { let _ = child.kill(); let _ = child.wait(); return Err(format!("Cannot wait for FFmpeg: {e}")); }
+            Ok(None) => {},
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("Cannot wait for FFmpeg: {error}"));
+            }
         }
     };
     let _ = reader_handle.join();
     let _ = stderr_handle.join();
-    if was_cancelled || cancelled.load(Ordering::SeqCst) {
+    if was_cancelled || cancelled.load(Ordering::SeqCst) { return Err("Cancelled".into()); }
+    let diagnostics = errors.lock().ok()
+        .map(|lines| lines.iter().cloned().collect::<Vec<_>>())
+        .unwrap_or_else(|| vec!["Could not read FFmpeg diagnostics".into()]);
+    if !status.success() {
+        return Err(format!("FFmpeg pass {pass} exited with {status}: {}",
+            if diagnostics.is_empty() {
+                "No details; inspect codecs and input".to_owned()
+            } else { diagnostics.join("\n") }));
+    }
+    Ok(diagnostics)
+}
+
+fn run_job(
+    id: u64, input: &Path, options: &EncodeOptions, tx: &Sender<Event>,
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
+    if cancelled.load(Ordering::SeqCst) { return Err("Cancelled".into()); }
+    let output = output_path(input, options)?;
+    let temp = temporary_output(&output, id)?;
+    // Always validate the command BEFORE broadcasting Started.
+    let args = build_args(input, &temp, options)?;
+    let _ = tx.send(Event::Started { id, output: output.clone() });
+    let report_lines = if options.preset.report() { 4096 } else { 64 };
+    let execute = (|| -> Result<Vec<String>, String> {
+        if options.two_pass {
+            let stats = PassLogDir::create(&temp, id)?;
+            let prefix = stats.prefix();
+            let first = build_two_pass_args(input, &temp, options, 1, &prefix)?;
+            let second = build_two_pass_args(input, &temp, options, 2, &prefix)?;
+            run_ffmpeg_command(id, &options.ffmpeg, &first, tx,
+                cancelled, report_lines, 1, true)?;
+            if cancelled.load(Ordering::SeqCst) { return Err("Cancelled".into()); }
+            run_ffmpeg_command(id, &options.ffmpeg, &second, tx,
+                cancelled, report_lines, 2, true)
+        } else {
+            run_ffmpeg_command(id, &options.ffmpeg, &args, tx,
+                cancelled, report_lines, 1, false)
+        }
+    })();
+    let diagnostics = match execute {
+        Ok(lines) => lines,
+        Err(error) => {
+            let _ = fs::remove_file(&temp);
+            return Err(error);
+        }
+    };
+    if cancelled.load(Ordering::SeqCst) {
         let _ = fs::remove_file(&temp);
         return Err("Cancelled".into());
     }
-    if !status.success() {
-        let stderr = errors.lock().ok().map(|lines| lines.iter().cloned().collect::<Vec<_>>().join("\n"))
-            .unwrap_or_else(|| "Could not read FFmpeg diagnostics".into());
-        let _ = fs::remove_file(&temp);
-        return Err(format!("FFmpeg exited with {status}: {}", if stderr.is_empty() { "No details; inspect codecs and input" } else { &stderr }));
-    }
-    if cancelled.load(Ordering::SeqCst) { let _ = fs::remove_file(&temp); return Err("Cancelled".into()); }
     if options.preset.report() {
-        let report = errors.lock().map_err(|_| "Could not gather analyzer diagnostics".to_owned())?
-            .iter().cloned().collect::<Vec<_>>().join("\n");
         fs::write(&temp, format!("Rust Encoder analysis: {:?}\nInput: {}\n\n{}\n",
-            options.preset, input.display(), report))
-            .map_err(|e| format!("Could not save media analysis report: {e}"))?;
+            options.preset, input.display(), diagnostics.join("\n")))
+            .map_err(|error| format!("Could not save media analysis report: {error}"))?;
     }
-    finalize_output(&temp, &output).map_err(|e| format!("Could not finalize output {}: {e}; intermediate file: {}", output.display(), temp.display()))?;
+    finalize_output(&temp, &output)
+        .map_err(|error| format!("Could not finalize output {}: {error}; intermediate file: {}",
+            output.display(), temp.display()))?;
     let _ = tx.send(Event::Completed { id, output });
     Ok(())
 }
@@ -498,7 +604,7 @@ mod tests {
     use super::*;
     fn options(preset: Preset) -> EncodeOptions {
         EncodeOptions { preset, quality: 23,
-            use_video_bitrate: false, video_bitrate_kbps: 4000,
+            use_video_bitrate: false, two_pass: false, video_bitrate_kbps: 4000,
             max_video_bitrate_kbps: 0, encoder_speed: 1, encoder_threads: 0,
             keyframe_interval: 0, faststart: true,
             target_width: 0, audio_bitrate_kbps: 192,
@@ -629,6 +735,38 @@ mod tests {
         o.max_video_bitrate_kbps = 100;
         assert!(validate_options(&o).is_err());
         o.max_video_bitrate_kbps = 0; o.video_bitrate_kbps = 0;
+        assert!(validate_options(&o).is_err());
+        std::fs::remove_file(input).unwrap();
+    }
+
+    #[test]
+    fn two_pass_commands_are_safe_and_isolated() {
+        let input = std::env::temp_dir().join(format!("two-pass-{}.mkv", std::process::id()));
+        std::fs::write(&input, b"fixture").unwrap();
+        let mut o = options(Preset::H264);
+        o.use_video_bitrate = true;
+        o.two_pass = true;
+        let out = input.with_extension("mp4");
+        let dir = PassLogDir::create(&out, 42).unwrap();
+        let first = build_two_pass_args(&input, &out, &o, 1, &dir.prefix()).unwrap();
+        let second = build_two_pass_args(&input, &out, &o, 2, &dir.prefix()).unwrap();
+        assert_eq!(first.last().unwrap(), "-");
+        assert_eq!(second.last().unwrap(), out.as_os_str());
+        assert!(first.windows(2).any(|v| v[0] == "-pass" && v[1] == "1"));
+        assert!(second.windows(2).any(|v| v[0] == "-pass" && v[1] == "2"));
+        assert!(first.iter().any(|x| x == "-an"));
+        assert!(first.iter().any(|x| x == "-f"));
+        assert!(!second.iter().any(|x| x == "-f"));
+        let path = dir.0.clone();
+        drop(dir);
+        assert!(!path.exists());
+        o.use_video_bitrate = false;
+        assert!(validate_options(&o).is_err());
+        o.use_video_bitrate = true;
+        o.hardware_encoder = HardwareEncoder::Nvenc;
+        assert!(validate_options(&o).is_err());
+        o.hardware_encoder = HardwareEncoder::Software;
+        o.preset = Preset::H265;
         assert!(validate_options(&o).is_err());
         std::fs::remove_file(input).unwrap();
     }
