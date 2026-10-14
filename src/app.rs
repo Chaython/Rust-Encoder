@@ -74,6 +74,8 @@ pub struct EncoderApp {
     pending_input_paths: Vec<PathBuf>,
     next_id: u64,
     selected_job: Option<u64>,
+    queue_filter: String,
+    compact_queue: bool,
     preview_for: Option<(u64, u64)>,
     preview_loading: bool,
     preview_playing: bool,
@@ -127,6 +129,8 @@ impl EncoderApp {
             pending_input_paths: Vec::new(),
             next_id: 1,
             selected_job: None,
+            queue_filter: String::new(),
+            compact_queue: true,
             preview_for: None,
             preview_loading: false,
             preview_playing: false,
@@ -454,7 +458,12 @@ impl EncoderApp {
                 }
             }
         });
-        ui.small("Drop video or audio files here. Pending files use the function and settings shown on the right.");
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut self.queue_filter)
+                .hint_text("Filter files…").desired_width((ui.available_width()-105.0).max(80.0)));
+            ui.checkbox(&mut self.compact_queue, "Compact");
+        });
+        ui.small("Drop files here. Settings apply to pending jobs.");
         ui.separator();
 
         let mut remove_id = None;
@@ -465,7 +474,42 @@ impl EncoderApp {
             .max_height(list_height)
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                let filter = self.queue_filter.trim().to_lowercase();
                 for job in &self.jobs {
+                    if !filter.is_empty()
+                        && !job.input.to_string_lossy().to_lowercase().contains(&filter) {
+                        continue;
+                    }
+                    if self.compact_queue {
+                        ui.horizontal(|ui| {
+                            let filename = job.input.file_name().map(|x| x.to_string_lossy())
+                                .unwrap_or_default();
+                            let label = format!("{} · {}", filename, job.status.label());
+                            if ui.selectable_label(self.selected_job == Some(job.id), label)
+                                .on_hover_text(job.input.display().to_string()).clicked() {
+                                self.selected_job = Some(job.id);
+                            }
+                            if matches!(job.status, JobState::Failed(_))
+                                && ui.small_button("↻").on_hover_text("Retry").clicked() {
+                                retry_id = Some(job.id);
+                            }
+                            if !matches!(job.status, JobState::Running | JobState::Cancelling | JobState::Analyzing)
+                                && ui.small_button("×").on_hover_text("Remove").clicked() {
+                                remove_id = Some(job.id);
+                            }
+                        });
+                        if matches!(job.status, JobState::Running | JobState::Cancelling) {
+                            let fraction = job.media.as_ref()
+                                .and_then(|m| encode::expected_duration(m, &job.options))
+                                .map(|d| (job.elapsed_sec / d).clamp(0.0, 1.0) as f32)
+                                .unwrap_or(0.0);
+                            ui.add(egui::ProgressBar::new(fraction)
+                                .text(format!("{} · {:.1}s", job.speed, job.elapsed_sec)));
+                        }
+                        if let JobState::Failed(error) = &job.status {
+                            ui.colored_label(egui::Color32::LIGHT_RED, error);
+                        }
+                    } else {
                     ui.group(|ui| {
                         ui.horizontal_wrapped(|ui| {
                             let filename = job.input.file_name()
@@ -508,7 +552,8 @@ impl EncoderApp {
                             });
                         }
                     });
-                    ui.add_space(4.0);
+                    }
+                    ui.add_space(if self.compact_queue { 2.0 } else { 4.0 });
                 }
                 if self.jobs.is_empty() {
                     ui.vertical_centered(|ui| {
@@ -993,7 +1038,7 @@ impl EncoderApp {
         ui.small("Experimental embedded A/V supports pause/resume, audio-only media and independently finishing audio tails. FFplay is the fallback; source-PTS synchronization, multi-cut EDL and audio-track editing remain unported.");
     }
 
-    fn options_ui(&mut self, ui: &mut egui::Ui) {
+    fn function_ui(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
         ui.heading("Choose function");
         let previous_preset = self.settings.preset;
@@ -1001,8 +1046,19 @@ impl EncoderApp {
             .selected_text(self.settings.preset.label())
             .width(ui.available_width().max(190.0))
             .show_ui(ui, |ui| {
-                for preset in Preset::ALL {
-                    changed |= ui.selectable_value(&mut self.settings.preset, preset, preset.label()).changed();
+                for category in ["Video codecs", "Stream copy", "Audio", "Images & subtitles", "Analysis"] {
+                    ui.label(egui::RichText::new(category).strong());
+                    for preset in Preset::ALL {
+                        let group = if preset.video() { "Video codecs" }
+                            else if preset.audio_only() { "Audio" }
+                            else if preset.report() || preset == Preset::FrameMd5 { "Analysis" }
+                            else if matches!(preset, Preset::RemuxMkv | Preset::RemuxMp4 | Preset::VideoOnly) { "Stream copy" }
+                            else { "Images & subtitles" };
+                        if group == category {
+                            changed |= ui.selectable_value(&mut self.settings.preset, preset, preset.label()).changed();
+                        }
+                    }
+                    ui.separator();
                 }
             });
         if previous_preset != self.settings.preset {
@@ -1029,6 +1085,13 @@ impl EncoderApp {
         }
         ui.small("Function changes update queued jobs; active and completed jobs are unchanged.");
         ui.add_space(6.0);
+        if changed { self.mark_settings_changed(); }
+    }
+
+    fn options_ui(&mut self, ui: &mut egui::Ui) {
+        let mut changed = false;
+        ui.heading("Encoding settings");
+
 
         egui::CollapsingHeader::new("Image / codec")
             .default_open(true)
@@ -1365,38 +1428,62 @@ impl eframe::App for EncoderApp {
             else { egui::Visuals::light() });
 
         self.tick_playback();
-        // Top/center/footer are flexibly sized. The main queue and settings
-        // scroll independently in a wide window and stack on narrow windows.
+        // Shutter-inspired wide workspace: queue/function | preview | settings.
         self.header_ui(ui);
         let width = ui.available_width();
         let height = ui.available_height();
-        if width >= 940.0 {
+        let body_height = (height - 108.0).max(210.0);
+        if width >= 1250.0 {
+            let left = (width * 0.21).clamp(245.0, 335.0);
+            let right = (width * 0.29).clamp(340.0, 455.0);
+            let center = (width - left - right - 28.0).max(360.0);
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(egui::vec2(left, body_height),
+                    egui::Layout::top_down(egui::Align::Min), |ui| {
+                        self.files_ui(ui, (body_height - 245.0).max(130.0));
+                        ui.separator();
+                        self.function_ui(ui);
+                    });
+                ui.separator();
+                ui.allocate_ui_with_layout(egui::vec2(center, body_height),
+                    egui::Layout::top_down(egui::Align::Min), |ui| {
+                        egui::ScrollArea::vertical().id_salt("preview-pane")
+                            .auto_shrink([false, false]).max_height(body_height)
+                            .show(ui, |ui| {
+                                self.ensure_preview();
+                                self.preview_ui(ui);
+                            });
+                    });
+                ui.separator();
+                ui.allocate_ui_with_layout(egui::vec2(right, body_height),
+                    egui::Layout::top_down(egui::Align::Min), |ui| {
+                        egui::ScrollArea::vertical().id_salt("settings-pane")
+                            .auto_shrink([false, false]).max_height(body_height)
+                            .show(ui, |ui| self.options_ui(ui));
+                    });
+            });
+        } else if width >= 870.0 {
             ui.columns(2, |columns| {
                 egui::ScrollArea::vertical().id_salt("queue-and-timeline-scroll")
-                    .auto_shrink([false, false])
-                    .max_height((height - 125.0).max(220.0))
+                    .auto_shrink([false, false]).max_height(body_height)
                     .show(&mut columns[0], |ui| {
-                        self.files_ui(ui, (height - 510.0).clamp(115.0, 240.0));
+                        self.files_ui(ui, (body_height - 430.0).clamp(135.0, 265.0));
+                        self.function_ui(ui);
+                        ui.separator();
                         self.ensure_preview();
                         self.preview_ui(ui);
                     });
                 egui::ScrollArea::vertical().id_salt("setting-scroll")
-                    .auto_shrink([false, false])
-                    .max_height((height - 125.0).max(220.0))
+                    .auto_shrink([false, false]).max_height(body_height)
                     .show(&mut columns[1], |ui| self.options_ui(ui));
             });
         } else {
             egui::ScrollArea::vertical().id_salt("compact-main")
-                .auto_shrink([false, false])
-                .max_height((height - 105.0).max(220.0))
+                .auto_shrink([false, false]).max_height(body_height)
                 .show(ui, |ui| {
-                    // A bounded queue prevents the settings from being pushed
-                    // indefinitely below the fold on smaller windows.
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(ui.available_width(), 235.0),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| self.files_ui(ui, 155.0),
-                    );
+                    self.files_ui(ui, 190.0);
+                    self.function_ui(ui);
+                    ui.separator();
                     self.ensure_preview();
                     self.preview_ui(ui);
                     ui.separator();
