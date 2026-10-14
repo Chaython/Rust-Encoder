@@ -139,9 +139,10 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
             } else { skipped.push(format!("Unsupported audio bitrate: {value}")); }
         }
     }
+    // Shutter Encoder's QMax checkbox controls quantizer constraints;
+    // it is NOT an encoding-speed preset. Never substitute a speed setting.
     if get("caseQMax") == Some("true") && preset.video() {
-        settings.encoder_speed = 2;
-        applied.push("Maximum quality (closest available preset)".into());
+        skipped.push("QMax quantizer constraints (not equivalent to encoder speed)".into());
     }
     // The legacy UI contains hundreds of settings without Rust equivalents.
     // Surface untranslated enabled controls instead of pretending full parity.
@@ -188,6 +189,16 @@ mod tests {
         assert_eq!(parsed.settings.video_bitrate_kbps, 5000);
         assert_eq!(parsed.settings.max_video_bitrate_kbps, 8000);
         assert!(parsed.settings.two_pass);
+    }
+    #[test]
+    fn qmax_does_not_change_encoder_speed() {
+        let xml = r#"<Settings>
+            <Component><Name>comboFonctions</Name><Value>H.264</Value></Component>
+            <Component><Name>caseQMax</Name><Value>true</Value></Component>
+        </Settings>"#;
+        let imported = import_xml(xml, &Settings::default()).unwrap();
+        assert_eq!(imported.settings.encoder_speed, Settings::default().encoder_speed);
+        assert!(imported.skipped.iter().any(|item| item.contains("QMax")));
     }
     #[test]
     fn refuses_unknown_function_and_entity_declaration() {
