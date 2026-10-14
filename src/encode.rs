@@ -419,7 +419,11 @@ pub fn output_path(input: &Path, o: &EncodeOptions) -> Result<PathBuf, String> {
     for index in 0..100_000 {
         let suffix = if index == 0 { String::new() } else { format!("_{index}") };
         let output = parent.join(format!("{root}{suffix}.{}", o.preset.extension()));
-        if output != input && !output.exists() { return Ok(output); }
+        // exists() follows symlinks, so a dangling symlink looks free even
+        // though creating the output would collide with its directory entry.
+        if output != input && fs::symlink_metadata(&output).is_err() {
+            return Ok(output);
+        }
     }
     Err("Too many output name collisions".into())
 }
@@ -776,6 +780,24 @@ mod tests {
         let path = output_path(&tmp.join("sample.mp4"), &o).unwrap();
         assert_ne!(path, tmp.join("sample.mp4"));
         assert_eq!(path.extension().and_then(|x| x.to_str()), Some("mp4"));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn dangling_symlink_output_name_is_not_reused() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!(
+            "rust-encoder-dangling-{}-{:?}", std::process::id(), std::thread::current().id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("source.mkv");
+        fs::write(&input, b"input").unwrap();
+        let mut o = options(Preset::H264);
+        o.output_dir = Some(dir.clone());
+        let first = dir.join("source_h264.mp4");
+        symlink(dir.join("missing-target"), &first).unwrap();
+        let output = output_path(&input, &o).unwrap();
+        assert_eq!(output, dir.join("source_h264_1.mp4"));
+        assert!(fs::symlink_metadata(&first).unwrap().file_type().is_symlink());
+        fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn output_collision_at_finalization_preserves_both_files() {
