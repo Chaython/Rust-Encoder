@@ -6,3 +6,4 @@ pub mod model;
 pub mod player;
 pub mod preview_stream;
 pub mod audio_preview;
+pub mod dependencies;

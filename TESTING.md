@@ -57,3 +57,11 @@ No realtime video player, synchronized waveform/editor timeline, bulk image sequ
 - GUI tests check trimmed bounds (including invalid older settings) and preview panels without a window.
 - The preview decodes **silent sampled frames** rather than replaying synchronized audio. Multiple rapid scrub requests are serialized per selection; stale results are discarded.
 - Manual GUI checks remain essential for scrubbing, repeated switching between files, input focus, small-window layout, memory usage and longer videos.
+
+## FFmpeg launch bootstrap checks
+
+- When FFmpeg/FFprobe both work on PATH, no download is made. The user-data install is only used if needed.
+- Launch with neither installed, verify the GUI is responsive while downloading, that the downloaded SHA-256 manifest matches the archive, and that only the executable names are extracted to the application data directory.
+- Verify a saved invalid executable override is cleared and queued file imports are probed after installation.
+- Verify interrupted downloads, permission failures, unsupported CPU architectures, and offline startup show actionable errors without blocking the GUI.
+- Do not include third-party FFmpeg binaries in the project's own release ZIPs without additional licensing review.

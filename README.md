@@ -41,6 +41,14 @@ sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libwayland-dev libxcb-shap
 
 [Build workflow](.github/workflows/build.yml) runs source checks, tests, lint, release compilation, a headless `--version` startup test and uploads portable ZIPs on Windows/macOS/Linux. On Linux it also executes the FFmpeg integration tests against generated media. Binaries are not code-signed or notarized; a successful headless startup test does not prove that every native GUI control renders correctly.
 
+## Automatic FFmpeg setup
+
+Rust Encoder checks **both** FFmpeg and FFprobe as soon as the app launches. When either is unavailable, it downloads the appropriate platform build from [binmgr/ffmpeg GitHub Releases](https://github.com/binmgr/ffmpeg/releases) to the per-user application data directory (`rust-encoder/tools/ffmpeg`). The download runs in a worker thread, requires **no administrator privileges**, and displays the current stage in the GUI. Builds are checked against the upstream SHA-256 checksum manifest before any executable is installed.
+
+Previously working binaries on PATH and valid manually configured executable paths are respected. Invalid overrides are cleared after successful installation. File imports made during setup are queued until FFprobe is ready. If automatic download fails (network/permissions/unsupported architecture), use **Recheck / install tools** or supply executable paths under **External tools**.
+
+The automatically downloaded FFmpeg binaries are **separate third-party GPL media software**, not included with Rust Encoder's rolling-release ZIP. Installation requires an Internet connection, and supported platforms are Windows/Linux/macOS on x64/ARM64; see the upstream release for build licensing and provenance.
+
 ## Rolling release
 
 Every successful build of `main` updates the [Rolling prerelease](https://github.com/Chaython/Rust-Encoder/releases/tag/rolling) with verified Windows, Linux, and macOS portable ZIPs and `SHA256SUMS.txt`.

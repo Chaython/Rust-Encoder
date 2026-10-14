@@ -7,6 +7,7 @@ use rust_encoder::{
     player::{self, PlaybackSession},
     preview_stream::{self, NativeVideoPreview},
     audio_preview::NativeAudioPreview,
+    dependencies::{self, State as DependencyState},
 };
 use std::{
     path::PathBuf,
@@ -67,6 +68,10 @@ pub struct EncoderApp {
     jobs: Vec<Job>,
     sender: Sender<Event>,
     receiver: Receiver<Event>,
+    dependency_sender: Sender<DependencyState>,
+    dependency_receiver: Receiver<DependencyState>,
+    dependency_state: DependencyState,
+    pending_input_paths: Vec<PathBuf>,
     next_id: u64,
     selected_job: Option<u64>,
     preview_for: Option<(u64, u64)>,
@@ -100,11 +105,22 @@ pub struct EncoderApp {
 impl EncoderApp {
     pub fn new() -> Self {
         let (sender, receiver) = crossbeam_channel::unbounded();
+        let (dependency_sender, dependency_receiver) = crossbeam_channel::unbounded();
+        let settings = model::load_settings();
+        dependencies::start_check(
+            settings.ffmpeg_path.clone(),
+            settings.ffprobe_path.clone(),
+            dependency_sender.clone()
+        );
         Self {
-            settings: model::load_settings(),
+            settings,
             jobs: Vec::new(),
             sender,
             receiver,
+            dependency_sender,
+            dependency_receiver,
+            dependency_state: DependencyState::Checking,
+            pending_input_paths: Vec::new(),
             next_id: 1,
             selected_job: None,
             preview_for: None,
@@ -137,6 +153,11 @@ impl EncoderApp {
     }
 
     fn add_files(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
+        if !matches!(self.dependency_state, DependencyState::Ready { .. }) {
+            self.pending_input_paths.extend(paths.into_iter().filter(|p| p.is_file()));
+            self.notice = "Files queued until FFmpeg and FFprobe are available.".into();
+            return;
+        }
         let probe_tool = model::resolve_tool("ffprobe", &self.settings.ffprobe_path);
         for path in paths {
             if !path.is_file() { continue; }
@@ -184,6 +205,71 @@ impl EncoderApp {
                 ctx.request_repaint_after(Duration::from_millis(420));
             }
         }
+    }
+
+    fn poll_dependencies(&mut self) {
+        while let Ok(state) = self.dependency_receiver.try_recv() {
+            if let DependencyState::Ready { installed, .. } = &state {
+                // Invalid saved override paths must not shadow the newly installed tools.
+                if !dependencies::usable(&model::resolve_tool("ffmpeg", &self.settings.ffmpeg_path)) {
+                    self.settings.ffmpeg_path.clear();
+                    self.mark_settings_changed();
+                }
+                if !dependencies::usable(&model::resolve_tool("ffprobe", &self.settings.ffprobe_path)) {
+                    self.settings.ffprobe_path.clear();
+                    self.mark_settings_changed();
+                }
+                if *installed {
+                    self.notice = "FFmpeg and FFprobe installed in the Rust Encoder data directory.".into();
+                }
+            }
+            let ready = matches!(state, DependencyState::Ready { .. });
+            self.dependency_state = state;
+            if ready && !self.pending_input_paths.is_empty() {
+                let paths = std::mem::take(&mut self.pending_input_paths);
+                self.add_files(paths);
+            }
+        }
+    }
+
+    fn retry_dependencies(&mut self) {
+        self.dependency_state = DependencyState::Checking;
+        dependencies::start_check(
+            self.settings.ffmpeg_path.clone(),
+            self.settings.ffprobe_path.clone(),
+            self.dependency_sender.clone(),
+        );
+    }
+
+    fn dependencies_ui(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            match &self.dependency_state {
+                DependencyState::Checking => { ui.spinner(); ui.label("Checking FFmpeg tools…"); }
+                DependencyState::Downloading(message) => {
+                    ui.spinner();
+                    ui.label(message);
+                }
+                DependencyState::Extracting => {
+                    ui.spinner();
+                    ui.label("Verifying and installing FFmpeg/FFprobe into user data…");
+                }
+                DependencyState::Ready { installed, directory } => {
+                    let status = if *installed { "FFmpeg and FFprobe installed" }
+                        else { "FFmpeg and FFprobe available" };
+                    ui.label(status);
+                    if let Some(dir) = directory {
+                        ui.small(dir.display().to_string());
+                    }
+                }
+                DependencyState::Failed(message) => {
+                    ui.colored_label(egui::Color32::LIGHT_RED, message);
+                }
+            }
+            if matches!(self.dependency_state, DependencyState::Failed(_) | DependencyState::Ready { .. })
+                && ui.button("Recheck / install tools").clicked() {
+                    self.retry_dependencies();
+            }
+        });
     }
 
     fn poll_events(&mut self) {
@@ -270,6 +356,7 @@ impl EncoderApp {
     }
 
     fn start_next(&mut self) {
+        if !matches!(self.dependency_state, DependencyState::Ready { .. }) { return; }
         if !self.process_queue || self.current.is_some() { return; }
         if let Some(job) = self.jobs.iter_mut().find(|j| matches!(j.status, JobState::Queued)) {
             let flag = Arc::new(AtomicBool::new(false));
@@ -311,6 +398,7 @@ impl EncoderApp {
     }
 
     fn header_ui(&mut self, ui: &mut egui::Ui) {
+        self.dependencies_ui(ui);
         ui.horizontal_wrapped(|ui| {
             ui.heading("Rust Encoder");
             ui.label("Media encoder");
@@ -1262,6 +1350,7 @@ fn preview_bounds(duration: f64, start: f64, end: f64) -> (f64, f64) {
 impl eframe::App for EncoderApp {
     // eframe 0.36 uses `App::ui` for the native root viewport.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.poll_dependencies();
         self.poll_events();
         self.refresh_av_player();
         self.update_native_video(ui.ctx());
@@ -1317,6 +1406,7 @@ impl eframe::App for EncoderApp {
             || self.jobs.iter().any(|j| matches!(j.status, JobState::Analyzing))
             || self.preview_loading || self.preview_playing || self.av_player.is_some()
             || self.native_video.is_some() || self.native_audio.is_some()
+            || matches!(self.dependency_state, DependencyState::Checking | DependencyState::Downloading(_) | DependencyState::Extracting)
         {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
         }
