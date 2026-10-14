@@ -80,6 +80,15 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     if options.end_seconds != 0.0 && options.end_seconds <= options.start_seconds {
         return Err("Trim end must be greater than start (or 0 to disable)".into());
     }
+    // FFmpeg command arguments use millisecond precision. Reject sub-ms
+    // ranges that would round to zero or a negative effective duration.
+    if options.end_seconds > 0.0 {
+        let start_ms = (options.start_seconds * 1000.0).round();
+        let duration_ms = ((options.end_seconds - options.start_seconds) * 1000.0).round();
+        if !start_ms.is_finite() || !duration_ms.is_finite() || duration_ms < 1.0 {
+            return Err("Trim interval must be at least one millisecond".into());
+        }
+    }
     if !options.brightness.is_finite() || !(-1.0..=1.0).contains(&options.brightness)
         || !options.contrast.is_finite() || !(0.0..=2.0).contains(&options.contrast)
         || !options.saturation.is_finite() || !(0.0..=3.0).contains(&options.saturation)
@@ -840,6 +849,15 @@ mod tests {
         o.start_seconds = 20.0;
         o.end_seconds = 12.0;
         assert!(validate_options(&o).is_err());
+    }
+    #[test]
+    fn submillisecond_trim_is_rejected_before_ffmpeg() {
+        let mut o = options(Preset::H264);
+        o.start_seconds = 5.0;
+        o.end_seconds = 5.0001;
+        assert!(validate_options(&o).is_err());
+        o.end_seconds = 5.001;
+        assert!(validate_options(&o).is_ok());
     }
     #[test]
     fn output_names_do_not_overwrite_input() {
