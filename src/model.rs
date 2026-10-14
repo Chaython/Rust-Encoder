@@ -251,6 +251,9 @@ pub fn resolve_tool(name: &str, configured: &str) -> PathBuf {
             return bundled;
         }
     }
+    if let Some(managed) = crate::dependencies::managed_binary(name) {
+        return managed;
+    }
     PathBuf::from(executable)
 }
 
