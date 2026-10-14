@@ -1654,7 +1654,7 @@ fn sanitize_codec_settings(settings: &mut Settings) {
         settings.use_video_bitrate = false;
         settings.max_video_bitrate_kbps = 0;
     }
-    let software_10 = matches!(settings.preset, Preset::H265 | Preset::Av1)
+    let software_10 = matches!(settings.preset, Preset::H265 | Preset::Av1 | Preset::Vp9)
         && settings.hardware_encoder == HardwareEncoder::Software;
     let depth_selectable = matches!(
         settings.preset, Preset::H264 | Preset::H265 | Preset::Av1 | Preset::Vp9
