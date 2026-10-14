@@ -1897,6 +1897,23 @@ mod tests {
     }
 
     #[test]
+    fn vp9_profile_two_preserves_depth_but_not_unsupported_hdr_tags() {
+        let mut settings = Settings::default();
+        settings.preset = Preset::Vp9;
+        settings.output_bit_depth = 10;
+        settings.color_signal = ColorSignal::Bt2020Pq;
+        sanitize_codec_settings(&mut settings);
+        assert_eq!(settings.output_bit_depth, 10);
+        assert_eq!(settings.color_signal, ColorSignal::Automatic);
+        settings.color_signal = ColorSignal::Bt709;
+        sanitize_codec_settings(&mut settings);
+        assert_eq!(settings.color_signal, ColorSignal::Bt709);
+        settings.preset = Preset::H264;
+        sanitize_codec_settings(&mut settings);
+        assert_eq!(settings.output_bit_depth, 0);
+    }
+
+    #[test]
     fn changing_function_updates_only_pending_jobs() {
         let mut app = EncoderApp::new();
         app.settings = Settings::default();
