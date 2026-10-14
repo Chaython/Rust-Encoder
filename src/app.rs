@@ -1241,10 +1241,13 @@ impl EncoderApp {
                                     0, "Encoder default").changed();
                                 changed |= ui.selectable_value(&mut self.settings.output_bit_depth,
                                     8, "8-bit 4:2:0").changed();
-                                if matches!(self.settings.preset, Preset::H265 | Preset::Av1)
+                                if matches!(self.settings.preset, Preset::H265 | Preset::Av1 | Preset::Vp9)
                                     && self.settings.hardware_encoder == HardwareEncoder::Software {
+                                    let label = if self.settings.preset == Preset::Vp9 {
+                                        "10-bit 4:2:0 (VP9 Profile 2)"
+                                    } else { "10-bit 4:2:0 (Main10)" };
                                     changed |= ui.selectable_value(&mut self.settings.output_bit_depth,
-                                        10, "10-bit 4:2:0 (Main10)").changed();
+                                        10, label).changed();
                                 }
                             });
                         ui.label("Color metadata / signal");
