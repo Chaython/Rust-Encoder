@@ -1178,13 +1178,10 @@ impl EncoderApp {
                         ui.label("Bitrate adjustment");
                         ui.horizontal_wrapped(|ui| {
                             let quality_supported = self.settings.hardware_encoder != HardwareEncoder::VideoToolbox;
-                            changed |= ui.add_enabled(quality_supported,
-                                egui::SelectableLabel::new(!self.settings.use_video_bitrate,
-                                    "Constant quality (CRF)")).clicked()
-                                && quality_supported && {
-                                    self.settings.use_video_bitrate = false;
-                                    true
-                                };
+                            ui.add_enabled_ui(quality_supported, |ui| {
+                                changed |= ui.selectable_value(&mut self.settings.use_video_bitrate,
+                                    false, "Constant quality (CRF)").changed();
+                            });
                             changed |= ui.selectable_value(&mut self.settings.use_video_bitrate,
                                 true, "Target bitrate").changed();
                         });
