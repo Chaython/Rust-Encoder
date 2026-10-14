@@ -324,7 +324,9 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
                                 arg!("-qp_i"); arg!(&o.quality.to_string());
                                 arg!("-qp_p"); arg!(&o.quality.to_string());
                             }
-                            HardwareEncoder::VideoToolbox => { arg!("-b:v"); arg!("6M"); }
+                            HardwareEncoder::VideoToolbox => {
+                                return Err("VideoToolbox requires explicit target bitrate".into());
+                            }
                             HardwareEncoder::Software => unreachable!(),
                         }
                     }
@@ -1222,6 +1224,35 @@ mod tests {
         o.use_video_bitrate = true;
         assert!(validate_options(&o).is_ok());
     }
+    #[test]
+    fn hardware_quality_modes_emit_backend_specific_arguments() {
+        let dir = std::env::temp_dir().join(format!(
+            "rust-encoder-hw-quality-{}-{:?}", std::process::id(), std::thread::current().id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.mkv");
+        fs::write(&input, b"fixture").unwrap();
+        for (backend, expected) in [
+            (HardwareEncoder::Nvenc, "-cq"),
+            (HardwareEncoder::Qsv, "-global_quality"),
+            (HardwareEncoder::Amf, "-qp_i"),
+        ] {
+            let mut o = options(Preset::H264);
+            o.hardware_encoder = backend;
+            let args = build_args(&input, &dir.join("output.mp4"), &o).unwrap();
+            assert!(args.iter().any(|arg| arg == expected), "{backend:?}: missing {expected}");
+            assert!(!args.iter().any(|arg| arg == "-crf"), "{backend:?} should not use software CRF");
+        }
+        let mut o = options(Preset::H264);
+        o.hardware_encoder = HardwareEncoder::VideoToolbox;
+        assert!(build_args(&input, &dir.join("output.mp4"), &o).is_err());
+        o.use_video_bitrate = true;
+        o.video_bitrate_kbps = 3500;
+        let args = build_args(&input, &dir.join("output.mp4"), &o).unwrap();
+        assert!(args.windows(2).any(|pair| pair[0] == "-b:v" && pair[1] == "3500k"));
+        assert!(!args.iter().any(|arg| arg == "-cq" || arg == "-crf"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn unsupported_rate_control_is_not_silently_ignored() {
         for preset in [Preset::ProRes, Preset::Dnxhr] {
