@@ -53,3 +53,6 @@ See [FEATURE_PARITY.md](FEATURE_PARITY.md) for a more granular list. A checked e
 
 - [x] 8/10-bit software H.265/AV1 pixel format control and tagged Rec.709/BT.2020 PQ/HLG output
 - [ ] Source-aware HDR metadata propagation; HDR→SDR tone mapping and LUTs; mastering-display/MaxCLL/MaxFALL; 10-bit GPU capability verification
+
+- [x] Real libx265 two-pass HEVC encoding using nonempty x265-native stats, including Main10 output validation
+- [ ] Test true two-pass AV1 with the encoder's native statistics and establish bitrate accuracy

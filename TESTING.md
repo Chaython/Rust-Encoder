@@ -92,3 +92,8 @@ No realtime video player, synchronized waveform/editor timeline, bulk image sequ
 ## Pixel depth and color metadata validation
 - 10-bit requires software HEVC or AV1; PQ/HLG tagging additionally requires explicit 10-bit selection. Never imply tags convert color, produce HDR from SDR or include static mastering metadata.
 - Linux integration encodes 10-bit HEVC with Rec.709 signaling and verifies pix_fmt and all three color fields with FFprobe. Color tag unit tests verify restricted combinations and x265 VUI injection.
+
+## HEVC two-pass regressions
+- Do not use only FFmpeg's generic `-pass` for x265: an apparently successful encode can produce an empty pass log.
+- libx265 uses `pass=1|2:stats=encode.stats` (in a per-job cwd), verifies the first log is nonempty, and cleans up before finalizing. Relative user source/output paths must still work.
+- A Linux FFmpeg media fixture runs the real pair and checks HEVC Main10 pixel format and Rec.709 primaries/transfer/matrix with FFprobe.
