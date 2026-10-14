@@ -139,6 +139,16 @@ pub struct Settings {
     pub audio_stream: i32, // -1 all, -2 none, otherwise zero-based track index
     pub subtitle_stream: i32, // -1 none, otherwise zero-based track index
     pub video_stream: u32, // zero-based track index
+    pub deinterlace: bool,
+    pub denoise: bool,
+    pub sharpen: bool,
+    pub brightness: f32, // -1.0..1.0
+    pub contrast: f32,   // 0.0..2.0
+    pub saturation: f32, // 0.0..3.0
+    pub gamma: f32,      // 0.1..4.0
+    pub audio_channels: u8, // 0 source, 1 mono, 2 stereo
+    pub audio_sample_rate: u32, // 0 original
+    pub audio_gain_db: f32, // -30..30 dB
     pub output_dir: String,
     pub ffmpeg_path: String,
     pub ffprobe_path: String,
@@ -155,6 +165,9 @@ impl Default for Settings {
             crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
             rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
             audio_stream: -1, subtitle_stream: -1, video_stream: 0,
+            deinterlace: false, denoise: false, sharpen: false,
+            brightness: 0.0, contrast: 1.0, saturation: 1.0, gamma: 1.0,
+            audio_channels: 0, audio_sample_rate: 0, audio_gain_db: 0.0,
             output_dir: String::new(),
             ffmpeg_path: String::new(), ffprobe_path: String::new(), dark_theme: true,
         }
@@ -182,6 +195,16 @@ pub struct EncodeOptions {
     pub audio_stream: i32, // -1 all, -2 none, otherwise zero-based track index
     pub subtitle_stream: i32, // -1 none, otherwise zero-based track index
     pub video_stream: u32, // zero-based track index
+    pub deinterlace: bool,
+    pub denoise: bool,
+    pub sharpen: bool,
+    pub brightness: f32, // -1.0..1.0
+    pub contrast: f32,   // 0.0..2.0
+    pub saturation: f32, // 0.0..3.0
+    pub gamma: f32,      // 0.1..4.0
+    pub audio_channels: u8, // 0 source, 1 mono, 2 stereo
+    pub audio_sample_rate: u32, // 0 original
+    pub audio_gain_db: f32, // -30..30 dB
     pub output_dir: Option<PathBuf>,
     pub ffmpeg: PathBuf,
 }
@@ -201,6 +224,11 @@ impl Settings {
             flip_horizontal: self.flip_horizontal, flip_vertical: self.flip_vertical,
             audio_stream: self.audio_stream, subtitle_stream: self.subtitle_stream,
             video_stream: self.video_stream,
+            deinterlace: self.deinterlace, denoise: self.denoise, sharpen: self.sharpen,
+            brightness: self.brightness, contrast: self.contrast,
+            saturation: self.saturation, gamma: self.gamma,
+            audio_channels: self.audio_channels, audio_sample_rate: self.audio_sample_rate,
+            audio_gain_db: self.audio_gain_db,
             output_dir: (!self.output_dir.is_empty()).then(|| PathBuf::from(&self.output_dir)),
             ffmpeg: resolve_tool("ffmpeg", &self.ffmpeg_path),
         }

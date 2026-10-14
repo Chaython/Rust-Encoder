@@ -12,6 +12,9 @@ fn options(preset: Preset) -> EncodeOptions {
         crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
         rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
         audio_stream: -1, subtitle_stream: -1, video_stream: 0,
+        deinterlace: false, denoise: false, sharpen: false,
+        brightness: 0.0, contrast: 1.0, saturation: 1.0, gamma: 1.0,
+        audio_channels: 0, audio_sample_rate: 0, audio_gain_db: 0.0,
         output_dir: None, ffmpeg: PathBuf::from("ffmpeg"),
     }
 }
@@ -50,6 +53,21 @@ fn conversion_preview_audio_and_remux_finish() {
             options.crop_height = 64;
             options.rotate_degrees = 90;
             options.frame_rate = 5;
+            options.deinterlace = true;
+            options.denoise = true;
+            options.sharpen = true;
+            options.brightness = 0.12;
+            options.contrast = 1.1;
+            options.saturation = 1.25;
+            options.gamma = 0.95;
+            options.audio_channels = 1;
+            options.audio_sample_rate = 48_000;
+            options.audio_gain_db = -2.5;
+        }
+        if preset == Preset::Flac {
+            options.audio_channels = 2;
+            options.audio_sample_rate = 48_000;
+            options.audio_gain_db = -6.0;
         }
         if preset.report() {
             // Run the real background worker, not only its command builder;

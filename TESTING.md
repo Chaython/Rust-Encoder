@@ -23,3 +23,10 @@
 ## Known limitations
 
 No realtime video player, synchronized waveform/editor timeline, bulk image sequences, complete HDR/color/subtitle workflows, AI/media utility integrations, or full original feature equivalence. A one-pass `loudnorm` filter does not guarantee a measured integrated loudness target. Hardware encoders require compatible FFmpeg binaries and may not support software encoder settings.
+
+## Additional color and audio parity regression coverage
+
+- All advanced settings are serialized with backward-compatible defaults, and are snapshotted into pending encoding jobs.
+- Argument tests assert exactly one `-vf`/`-af` chain for combined effects, reject non-finite controls, and reject video/audio processing on stream-copy presets.
+- The Linux generated-media integration test now exercises YADIF, HQDN3D, unsharp and `eq` filters with H.264, including mono/48 kHz conversion and audio gain; FLAC additionally verifies resampling and gain.
+- These are simple FFmpeg processing modes; color-managed HDR, LUTs, per-channel mixing and two-pass broadcast loudness are not implemented.

@@ -6,9 +6,9 @@ This matrix is an **acceptance-tracking document**. Existing controls are not pr
 | --- | --- | --- |
 | Video encoding | H.264, H.265, AV1, VP9, ProRes, DNxHR; CRF/basic profiles | Broad profiles, hardware probing, bitrate/two-pass options, HDR/color, more codec variants |
 | Rewrap / lossless | MKV full copy, MP4 A/V copy, video-only copy, start/end trim | Multi-cut EDL, precise boundaries, metadata/track editor, more containers |
-| Audio | WAV, FLAC, MP3, AAC, Opus, one-pass loudnorm | Track replacement, channel remix/downmix, split, separation, accurate two-pass loudness |
+| Audio | WAV, FLAC, MP3, AAC, Opus, one-pass loudnorm, mono/stereo conversion, sample-rate conversion and gain | Track replacement, channel-by-channel remix, split, separation, accurate two-pass loudness |
 | Stream handling | Video/audio track indices, subtitle index/convert/extract; FFprobe metadata | Multi-language subtitle editing, external subs, burn-in, attachment editor, batch track routing |
-| Video filters | Resize, crop, flip, rotate, output FPS | Interpolation, VFR/CFR management, LUT/color grading, deinterlacing, overlays, advanced filters |
+| Video filters | Resize, crop, flip, rotate, output FPS, YADIF deinterlacing, HQDN3D denoising, sharpen, brightness/contrast/saturation/gamma | Frame interpolation, VFR/CFR management, LUT/advanced color grading, overlays and watermark filters |
 | Image processing | Single PNG/JPEG frame extraction, seek position preview | Whole image-sequence workflows, RAW conversion, EXIF/meta, image batch editor |
 | Detection and analysis | Frame MD5, black/freeze/silence detection, EBU R128 measurement, metadata inspection | Custom detection thresholds, offline detection, detailed loudness graph, VMAF, richer analysis reports |
 | Native UI | File queue, themes, metadata/preview, filters, persisted settings/profiles | Real-time player, timeline/waveform, docking, richer per-job editors, keyboard/accessibility |

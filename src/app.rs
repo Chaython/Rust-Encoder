@@ -483,6 +483,11 @@ impl EncoderApp {
             if !matches!(self.settings.preset, Preset::H264 | Preset::H265) {
                 self.settings.hardware_encoder = HardwareEncoder::Software;
             }
+            if !(self.settings.preset.video() || self.settings.preset.audio_only()) {
+                self.settings.audio_channels = 0;
+                self.settings.audio_sample_rate = 0;
+                self.settings.audio_gain_db = 0.0;
+            }
             if !self.settings.preset.video() {
                 self.settings.target_width = 0;
                 self.settings.frame_rate = 0;
@@ -490,6 +495,10 @@ impl EncoderApp {
                 self.settings.crop_x = 0; self.settings.crop_y = 0;
                 self.settings.rotate_degrees = 0;
                 self.settings.flip_horizontal = false; self.settings.flip_vertical = false;
+                self.settings.deinterlace = false; self.settings.denoise = false;
+                self.settings.sharpen = false;
+                self.settings.brightness = 0.0; self.settings.contrast = 1.0;
+                self.settings.saturation = 1.0; self.settings.gamma = 1.0;
             }
         }
         ui.small("Function changes update queued jobs; active and completed jobs are unchanged.");
@@ -527,6 +536,30 @@ impl EncoderApp {
                 if self.settings.preset.video() || self.settings.preset.audio_only()
                     || matches!(self.settings.preset, Preset::SilenceDetect | Preset::LoudnessReport) {
                     changed |= ui.checkbox(&mut self.settings.normalize_audio, "Normalize loudness (one-pass)").changed();
+                    if self.settings.preset.video() || self.settings.preset.audio_only() {
+                        ui.separator();
+                        ui.label("Output channels");
+                        egui::ComboBox::from_id_salt("audio-channels")
+                            .selected_text(match self.settings.audio_channels { 1 => "Mono", 2 => "Stereo", _ => "Source" })
+                            .show_ui(ui, |ui| {
+                                for (channels, label) in [(0, "Source"), (1, "Mono"), (2, "Stereo")] {
+                                    changed |= ui.selectable_value(&mut self.settings.audio_channels, channels, label).changed();
+                                }
+                            });
+                        ui.label("Output sample rate");
+                        egui::ComboBox::from_id_salt("audio-rate")
+                            .selected_text(if self.settings.audio_sample_rate == 0 { "Source".to_owned() }
+                                else { format!("{} Hz", self.settings.audio_sample_rate) })
+                            .show_ui(ui, |ui| {
+                                for sample_rate in [0, 22050, 32000, 44100, 48000, 96000, 192000] {
+                                    let label = if sample_rate == 0 { "Source".to_owned() } else { format!("{sample_rate} Hz") };
+                                    changed |= ui.selectable_value(&mut self.settings.audio_sample_rate, sample_rate, label).changed();
+                                }
+                            });
+                        ui.label("Audio gain (dB, before normalization)");
+                        changed |= ui.add(egui::Slider::new(&mut self.settings.audio_gain_db, -30.0..=30.0)
+                            .step_by(0.5)).changed();
+                    }
                 } else {
                     ui.small("Audio is copied without processing.");
                 }
@@ -569,13 +602,38 @@ impl EncoderApp {
                         });
                     changed |= ui.checkbox(&mut self.settings.flip_horizontal, "Flip horizontally").changed();
                     changed |= ui.checkbox(&mut self.settings.flip_vertical, "Flip vertically").changed();
+                    ui.separator();
+                    ui.label("Restoration / color adjustment");
+                    changed |= ui.checkbox(&mut self.settings.deinterlace, "Deinterlace (YADIF)").changed();
+                    changed |= ui.checkbox(&mut self.settings.denoise, "Temporal/spatial denoise (HQDN3D)").changed();
+                    changed |= ui.checkbox(&mut self.settings.sharpen, "Sharpen after scaling").changed();
+                    ui.label("Brightness");
+                    changed |= ui.add(egui::Slider::new(&mut self.settings.brightness, -1.0..=1.0)).changed();
+                    ui.label("Contrast");
+                    changed |= ui.add(egui::Slider::new(&mut self.settings.contrast, 0.0..=2.0)).changed();
+                    ui.label("Saturation");
+                    changed |= ui.add(egui::Slider::new(&mut self.settings.saturation, 0.0..=3.0)).changed();
+                    ui.label("Gamma");
+                    changed |= ui.add(egui::Slider::new(&mut self.settings.gamma, 0.1..=4.0)).changed();
+                    if ui.button("Reset color and restoration").clicked() {
+                        self.settings.deinterlace = false; self.settings.denoise = false;
+                        self.settings.sharpen = false;
+                        self.settings.brightness = 0.0; self.settings.contrast = 1.0;
+                        self.settings.saturation = 1.0; self.settings.gamma = 1.0;
+                        changed = true;
+                    }
                 } else {
                     ui.small("Non-encoding operations preserve frames/streams or export directly; filters are disabled.");
                     if ui.button("Reset video filters").clicked() {
                         self.settings.frame_rate = 0; self.settings.crop_width = 0; self.settings.crop_height = 0;
                         self.settings.crop_x = 0; self.settings.crop_y = 0;
                         self.settings.rotate_degrees = 0; self.settings.flip_horizontal = false;
-                        self.settings.flip_vertical = false; self.settings.target_width = 0; changed = true;
+                        self.settings.flip_vertical = false; self.settings.target_width = 0;
+                        self.settings.deinterlace = false; self.settings.denoise = false;
+                        self.settings.sharpen = false;
+                        self.settings.brightness = 0.0; self.settings.contrast = 1.0;
+                        self.settings.saturation = 1.0; self.settings.gamma = 1.0;
+                        changed = true;
                     }
                 }
             });

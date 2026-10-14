@@ -33,6 +33,27 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     if options.end_seconds != 0.0 && options.end_seconds <= options.start_seconds {
         return Err("Trim end must be greater than start (or 0 to disable)".into());
     }
+    if !options.brightness.is_finite() || !(-1.0..=1.0).contains(&options.brightness)
+        || !options.contrast.is_finite() || !(0.0..=2.0).contains(&options.contrast)
+        || !options.saturation.is_finite() || !(0.0..=3.0).contains(&options.saturation)
+        || !options.gamma.is_finite() || !(0.1..=4.0).contains(&options.gamma) {
+        return Err("Color settings out of range or non-finite".into());
+    }
+    if options.audio_channels > 2 { return Err("Audio channels: choose source (0), mono (1) or stereo (2)".into()); }
+    if options.audio_sample_rate != 0 && !(8_000..=192_000).contains(&options.audio_sample_rate) {
+        return Err("Sample rate must be 0 (source) or 8000–192000 Hz".into());
+    }
+    if !options.audio_gain_db.is_finite() || !(-30.0..=30.0).contains(&options.audio_gain_db) {
+        return Err("Audio gain must be finite and between -30 and +30 dB".into());
+    }
+    let audio_processing = options.audio_channels != 0 || options.audio_sample_rate != 0
+        || options.audio_gain_db != 0.0;
+    if audio_processing && !(options.preset.video() || options.preset.audio_only()) {
+        return Err("Audio processing requires an encoding preset, not stream copy or analysis".into());
+    }
+    if audio_processing && options.audio_stream == -2 {
+        return Err("Audio processing requires an enabled audio stream".into());
+    }
     if options.frame_rate > 240 {
         return Err("Frame rate must be 0 (original) or 1–240".into());
     }
@@ -54,6 +75,9 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     if !options.preset.video() && (
         options.frame_rate != 0 || options.crop_width != 0 || options.crop_height != 0 ||
         options.rotate_degrees != 0 || options.flip_horizontal || options.flip_vertical || options.target_width != 0
+        || options.deinterlace || options.denoise || options.sharpen
+        || options.brightness != 0.0 || options.contrast != 1.0
+        || options.saturation != 1.0 || options.gamma != 1.0
     ) {
         return Err("Video filters require a video-encoding function. Disable filters for copying, extraction or audio functions".into());
     }
@@ -65,6 +89,13 @@ pub fn expected_duration(info: &MediaInfo, settings: &EncodeOptions) -> Option<f
     let desired_end = if settings.end_seconds == 0.0 { input_end } else { settings.end_seconds.min(input_end) };
     let duration = desired_end - settings.start_seconds;
     duration.is_finite().then_some(duration).filter(|v| *v > 0.0)
+}
+
+fn audio_filters(o: &EncodeOptions) -> Vec<String> {
+    let mut filters = Vec::new();
+    if o.audio_gain_db != 0.0 { filters.push(format!("volume={:.2}dB", o.audio_gain_db)); }
+    if o.normalize_audio { filters.push("loudnorm=I=-16:TP=-1.5:LRA=11".into()); }
+    filters
 }
 
 /// FFmpeg args are kept as OS strings and never joined into a shell command.
@@ -145,7 +176,10 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
             if matches!(preset, Preset::Mp3 | Preset::Aac | Preset::Opus) {
                 arg!("-b:a"); arg!(&format!("{}k", o.audio_bitrate_kbps));
             }
-            if o.normalize_audio { arg!("-af"); arg!("loudnorm=I=-16:TP=-1.5:LRA=11"); }
+            let filters = audio_filters(o);
+            if !filters.is_empty() { arg!("-af"); arg!(&filters.join(",")); }
+            if o.audio_channels != 0 { arg!("-ac"); arg!(&o.audio_channels.to_string()); }
+            if o.audio_sample_rate != 0 { arg!("-ar"); arg!(&o.audio_sample_rate.to_string()); }
         }
         preset => {
             arg!("-map"); arg!(&format!("0:v:{}", o.video_stream));
@@ -184,6 +218,8 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
                 arg!("-pix_fmt"); arg!("yuv420p");
             }
             let mut video_filters: Vec<String> = Vec::new();
+            if o.deinterlace { video_filters.push("yadif=mode=send_frame:parity=auto:deint=all".into()); }
+            if o.denoise { video_filters.push("hqdn3d=1.5:1.5:6:6".into()); }
             if o.crop_width > 0 {
                 video_filters.push(format!("crop={}:{}:{}:{}", o.crop_width, o.crop_height, o.crop_x, o.crop_y));
             }
@@ -195,14 +231,22 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
             }
             if o.flip_horizontal { video_filters.push("hflip".into()); }
             if o.flip_vertical { video_filters.push("vflip".into()); }
+            if o.brightness != 0.0 || o.contrast != 1.0 || o.saturation != 1.0 || o.gamma != 1.0 {
+                video_filters.push(format!("eq=brightness={:.3}:contrast={:.3}:saturation={:.3}:gamma={:.3}",
+                    o.brightness, o.contrast, o.saturation, o.gamma));
+            }
             if o.target_width > 0 { video_filters.push(format!("scale={}:-2:flags=lanczos", o.target_width)); }
+            if o.sharpen { video_filters.push("unsharp=5:5:1.0:5:5:0.0".into()); }
             if o.frame_rate > 0 { video_filters.push(format!("fps={}", o.frame_rate)); }
             if !video_filters.is_empty() { arg!("-vf"); arg!(&video_filters.join(",")); }
             if o.audio_stream != -2 {
                 if preset == Preset::Vp9 { arg!("-c:a"); arg!("libopus"); }
                 else if matches!(preset, Preset::ProRes | Preset::Dnxhr) { arg!("-c:a"); arg!("pcm_s16le"); }
                 else { arg!("-c:a"); arg!("aac"); arg!("-b:a"); arg!(&format!("{}k", o.audio_bitrate_kbps)); }
-                if o.normalize_audio { arg!("-af"); arg!("loudnorm=I=-16:TP=-1.5:LRA=11"); }
+                let filters = audio_filters(o);
+            if !filters.is_empty() { arg!("-af"); arg!(&filters.join(",")); }
+            if o.audio_channels != 0 { arg!("-ac"); arg!(&o.audio_channels.to_string()); }
+            if o.audio_sample_rate != 0 { arg!("-ar"); arg!(&o.audio_sample_rate.to_string()); }
             }
             if matches!(preset, Preset::H264 | Preset::H265) { arg!("-movflags"); arg!("+faststart"); }
         }
@@ -407,6 +451,9 @@ mod tests {
             frame_rate: 0, crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
             rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
             audio_stream: -1, subtitle_stream: -1, video_stream: 0,
+            deinterlace: false, denoise: false, sharpen: false,
+            brightness: 0.0, contrast: 1.0, saturation: 1.0, gamma: 1.0,
+            audio_channels: 0, audio_sample_rate: 0, audio_gain_db: 0.0,
             output_dir: None, ffmpeg: PathBuf::from("ffmpeg") }
     }
     #[test]
@@ -472,6 +519,40 @@ mod tests {
         assert!(text.iter().any(|x| x.contains("crop=640:360:0:0,transpose=clock,fps=30")));
         assert!(!text.iter().any(|x| x == "-c:a"));
         std::fs::remove_file(input).unwrap();
+    }
+    #[test]
+    fn advanced_filters_generate_single_video_and_audio_chains() {
+        let path = std::env::temp_dir().join(format!("rust-encoder-adv-{}.mkv", std::process::id()));
+        std::fs::write(&path, b"test").unwrap();
+        let mut o = options(Preset::H264);
+        o.deinterlace = true; o.denoise = true; o.sharpen = true;
+        o.brightness = 0.1; o.contrast = 1.2; o.saturation = 1.3; o.gamma = 0.9;
+        o.audio_channels = 2; o.audio_sample_rate = 48_000; o.audio_gain_db = -3.0;
+        o.normalize_audio = true;
+        let a: Vec<String> = build_args(&path, &path.with_extension("mp4"), &o).unwrap()
+            .iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert_eq!(a.iter().filter(|a| *a == "-vf").count(), 1);
+        assert_eq!(a.iter().filter(|a| *a == "-af").count(), 1);
+        assert!(a.iter().any(|a| a.contains("yadif=") && a.contains("hqdn3d=")
+            && a.contains("eq=") && a.contains("unsharp=")));
+        assert!(a.iter().any(|a| a == "volume=-3.00dB,loudnorm=I=-16:TP=-1.5:LRA=11"));
+        assert!(a.windows(2).any(|a| a[0] == "-ac" && a[1] == "2"));
+        assert!(a.windows(2).any(|a| a[0] == "-ar" && a[1] == "48000"));
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn incompatible_processing_fails_closed() {
+        let mut o = options(Preset::RemuxMkv);
+        o.audio_gain_db = 1.0;
+        assert!(validate_options(&o).is_err());
+        let mut o = options(Preset::H264);
+        o.gamma = f32::NAN;
+        assert!(validate_options(&o).is_err());
+        o.gamma = 1.0; o.audio_stream = -2; o.audio_channels = 1;
+        assert!(validate_options(&o).is_err());
+        let mut o = options(Preset::RemuxMp4);
+        o.deinterlace = true;
+        assert!(validate_options(&o).is_err());
     }
     #[test]
     fn invalid_hardware_codec_rejected() {

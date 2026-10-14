@@ -8,9 +8,10 @@ See [FEATURE_PARITY.md](FEATURE_PARITY.md) for a more granular list. A checked e
 - [x] 23 FFmpeg-backed functions, including rewrap, audio extraction, still extraction, subtitles, MD5 and media diagnostics
 - [x] Seekable still-frame previews; track language/channel metadata
 - [x] Trim, resize, crop, rotate, flips, output FPS, one-pass normalization, stream selection
+- [x] YADIF deinterlace, HQDN3D denoise, sharpen, basic color adjustments; mono/stereo/sample-rate conversion and audio gain
 - [x] Manual H.264/H.265 GPU encoder selections; saved JSON profiles
 - [ ] Verified UI workflow at multiple resolutions, DPI and real OS themes
-- [ ] Color space, 10/12-bit, HDR metadata, LUTs, burn-in, watermark and deinterlacing
+- [ ] Color space, 10/12-bit, HDR metadata, LUTs, subtitle burn-in, watermark, advanced deinterlace cadence
 - [ ] GPU capability detection, parameter compatibility/fallback and 2-pass normalization
 - [ ] More codecs, containers, formats, professional profiles, caption workflows
 
