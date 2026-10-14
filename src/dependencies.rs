@@ -99,13 +99,23 @@ fn agent() -> ureq::Agent {
         .build()
 }
 
+/// GitHub's REST API only serves release JSON with a JSON Accept header.
+/// Using the binary asset media type for /releases/latest returns HTTP 415.
+fn accept_header(url: &str) -> &'static str {
+    if url.starts_with("https://api.github.com/") {
+        "application/vnd.github+json"
+    } else {
+        "application/octet-stream"
+    }
+}
+
 fn get_reader<'a>(agent: &'a ureq::Agent, url: &str) -> Result<Box<dyn Read + 'a>, String> {
     if !url.starts_with("https://") {
         return Err("Refusing an unencrypted FFmpeg download".to_owned());
     }
     let response = agent.get(url)
         .set("User-Agent", "Rust-Encoder-dependency-bootstrap")
-        .set("Accept", "application/octet-stream")
+        .set("Accept", accept_header(url))
         .call().map_err(|error| format!("Download request failed: {error}"))?;
     if !(200..300).contains(&response.status()) {
         return Err(format!("Unexpected download HTTP status {}", response.status()));
@@ -304,6 +314,32 @@ pub fn start_check(ffmpeg: String, ffprobe: String, tx: Sender<State>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn github_api_uses_json_accept_not_binary_asset_accept() {
+        let release = "https://api.github.com/repos/binmgr/ffmpeg/releases/latest";
+        assert_eq!(accept_header(release), "application/vnd.github+json");
+        assert_eq!(
+            accept_header("https://github.com/binmgr/ffmpeg/releases/download/v1/checksums.txt"),
+            "application/octet-stream"
+        );
+    }
+
+    /// This opt-in integration test validates the actual GitHub API and
+    /// release asset download, SHA-256 check, ZIP/TAR extraction and -version.
+    /// It installs only to the CI runner's temporary per-user data folder.
+    #[test]
+    #[ignore = "requires public Internet and downloads the upstream FFmpeg archive"]
+    fn bootstrap_downloads_and_validates_real_ffmpeg() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let result = install_once(&tx);
+        drop(rx);
+        let directory = result.expect("Validated FFmpeg/FFprobe download must succeed");
+        for tool in ["ffmpeg", "ffprobe"] {
+            let name = if cfg!(windows) { format!("{tool}.exe") } else { tool.to_owned() };
+            assert!(usable(&directory.join(name)));
+        }
+    }
 
     #[test]
     fn parses_named_checksum_not_a_similar_filename() {
