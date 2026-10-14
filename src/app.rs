@@ -1180,7 +1180,7 @@ impl EncoderApp {
                             let quality_supported = self.settings.hardware_encoder != HardwareEncoder::VideoToolbox;
                             ui.add_enabled_ui(quality_supported, |ui| {
                                 changed |= ui.selectable_value(&mut self.settings.use_video_bitrate,
-                                    false, "Constant quality (CRF)").changed();
+                                    false, quality_mode_label(self.settings.hardware_encoder)).changed();
                             });
                             changed |= ui.selectable_value(&mut self.settings.use_video_bitrate,
                                 true, "Target bitrate").changed();
@@ -1225,7 +1225,7 @@ impl EncoderApp {
                                 self.settings.max_video_bitrate_kbps = 0;
                                 changed = true;
                             }
-                            ui.label("Constant quality (lower CRF = higher quality)");
+                            ui.label(quality_setting_label(self.settings.hardware_encoder));
                             changed |= ui.add(egui::Slider::new(&mut self.settings.quality, 0..=51)).changed();
                         }
                     }
@@ -1643,6 +1643,26 @@ impl EncoderApp {
 /// conversion. Virtual scrolling only builds UI widgets for visible indices.
 /// Clear invisible, incompatible options after preset or GPU switches.
 /// Validation in the encoding worker remains authoritative.
+fn quality_mode_label(encoder: HardwareEncoder) -> &'static str {
+    match encoder {
+        HardwareEncoder::Software => "Constant quality (CRF)",
+        HardwareEncoder::Nvenc => "Constant quality (NVENC CQ)",
+        HardwareEncoder::Qsv => "Constant quality (QSV)",
+        HardwareEncoder::Amf => "Constant quality (AMF QP)",
+        HardwareEncoder::VideoToolbox => "Target bitrate required",
+    }
+}
+
+fn quality_setting_label(encoder: HardwareEncoder) -> &'static str {
+    match encoder {
+        HardwareEncoder::Software => "Constant quality (lower CRF = higher quality)",
+        HardwareEncoder::Nvenc => "NVENC CQ value (lower = higher quality)",
+        HardwareEncoder::Qsv => "Quick Sync global quality (lower = higher quality)",
+        HardwareEncoder::Amf => "AMD AMF quantizer (lower = higher quality)",
+        HardwareEncoder::VideoToolbox => "VideoToolbox requires target bitrate",
+    }
+}
+
 fn sanitize_codec_settings(settings: &mut Settings) {
     if !settings.use_video_bitrate {
         settings.max_video_bitrate_kbps = 0;
@@ -1894,6 +1914,15 @@ mod tests {
         sanitize_codec_settings(&mut settings);
         assert_eq!(settings.output_bit_depth, 0);
         assert_eq!(settings.color_signal, ColorSignal::Automatic);
+    }
+
+    #[test]
+    fn quality_labels_match_hardware_rate_control() {
+        assert!(quality_mode_label(HardwareEncoder::Software).contains("CRF"));
+        assert!(quality_mode_label(HardwareEncoder::Nvenc).contains("NVENC CQ"));
+        assert!(quality_setting_label(HardwareEncoder::Qsv).contains("global quality"));
+        assert!(quality_setting_label(HardwareEncoder::Amf).contains("quantizer"));
+        assert!(!quality_mode_label(HardwareEncoder::VideoToolbox).contains("CRF"));
     }
 
     #[test]
