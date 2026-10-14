@@ -46,6 +46,17 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
             return Err("HDR PQ/HLG tags require software H.265 or AV1 with 10-bit output; signaling does not convert SDR to HDR".into());
         }
     }
+    if matches!(options.preset, Preset::ProRes | Preset::Dnxhr)
+        && (options.use_video_bitrate || options.max_video_bitrate_kbps > 0)
+    {
+        return Err("ProRes/DNxHR use fixed professional profiles, not target or peak bitrate controls".into());
+    }
+    if matches!(options.preset, Preset::H264 | Preset::H265)
+        && options.hardware_encoder == HardwareEncoder::VideoToolbox
+        && !options.use_video_bitrate
+    {
+        return Err("VideoToolbox does not support this constant-quality control; select target bitrate".into());
+    }
     if options.encoder_speed > 2 { return Err("Encoder speed must be 0–2".into()); }
     if options.two_pass {
         if !options.use_video_bitrate {
@@ -1198,6 +1209,24 @@ mod tests {
         std::fs::remove_file(input).unwrap();
     }
 
+    #[test]
+    fn unsupported_rate_control_is_not_silently_ignored() {
+        for preset in [Preset::ProRes, Preset::Dnxhr] {
+            let mut o = options(preset);
+            o.use_video_bitrate = true;
+            assert!(validate_options(&o).is_err());
+            o.use_video_bitrate = false;
+            o.max_video_bitrate_kbps = 9000;
+            assert!(validate_options(&o).is_err());
+        }
+        for preset in [Preset::H264, Preset::H265] {
+            let mut o = options(preset);
+            o.hardware_encoder = HardwareEncoder::VideoToolbox;
+            assert!(validate_options(&o).is_err());
+            o.use_video_bitrate = true;
+            assert!(validate_options(&o).is_ok());
+        }
+    }
     #[test]
     fn invalid_hardware_codec_rejected() {
         let mut o = options(Preset::ProRes);
