@@ -1759,6 +1759,7 @@ mod tests {
             status,
             elapsed_sec: 0.0,
             speed: String::new(),
+            pass: 1,
         }
     }
 
