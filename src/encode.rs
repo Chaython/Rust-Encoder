@@ -189,6 +189,17 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
         }
     }
 
+    // The caller must supply a fresh temporary output. Refuse any existing
+    // filesystem entry, including dangling symlinks, before starting FFmpeg.
+    // The old equality checks above diagnose source aliases specifically.
+    match fs::symlink_metadata(temp_output) {
+        Ok(_) => return Err(format!(
+            "Temporary output already exists: {}", temp_output.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+        Err(error) => return Err(format!(
+            "Cannot inspect temporary output {}: {error}", temp_output.display())),
+    }
+
     let loglevel = if o.preset.report() { "info" } else { "error" };
     let mut args: Vec<OsString> = ["-nostdin", "-hide_banner", "-loglevel", loglevel, "-nostats",
         "-stats_period", "0.25", "-progress", "pipe:1", "-n"]
@@ -982,6 +993,36 @@ mod tests {
         let alias = dir.join(".").join("source.mp4");
         assert!(build_args(&input, &alias, &options(Preset::H264)).is_err());
         assert_eq!(fs::read(&input).unwrap(), b"original");
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn existing_unrelated_temporary_output_is_rejected() {
+        let dir = std::env::temp_dir().join(format!(
+            "rust-encoder-existing-temp-{}-{:?}",
+            std::process::id(), std::thread::current().id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.mkv");
+        let temp = dir.join("claimed.mp4");
+        fs::write(&input, b"source").unwrap();
+        fs::write(&temp, b"other job's output").unwrap();
+        assert!(build_args(&input, &temp, &options(Preset::H264)).is_err());
+        assert_eq!(fs::read(&temp).unwrap(), b"other job's output");
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn dangling_symlink_temporary_output_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!(
+            "rust-encoder-existing-link-{}-{:?}",
+            std::process::id(), std::thread::current().id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.mkv");
+        let temp = dir.join("dangling.mp4");
+        fs::write(&input, b"source").unwrap();
+        symlink(dir.join("nonexistent"), &temp).unwrap();
+        assert!(build_args(&input, &temp, &options(Preset::H264)).is_err());
+        assert!(fs::symlink_metadata(&temp).unwrap().file_type().is_symlink());
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]
