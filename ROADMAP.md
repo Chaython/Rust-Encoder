@@ -37,3 +37,9 @@ See [FEATURE_PARITY.md](FEATURE_PARITY.md) for a more granular list. A checked e
 - [ ] Integration test corpus across supported formats, codecs, languages, GPUs and edge cases
 - [ ] Bundled dependency options, offline packaging, native installers and code signing/notarization
 - [ ] Crash recovery, queue persistence, updates, keyboard accessibility, localization
+
+## Usability and performance work
+- [x] Responsive wide-screen queue / preview / options layout inspired by Shutter Encoder, plus searchable compact queues and grouped functions
+- [x] CRF or target video bitrate, peak bitrate, codec speed tiers, thread/GOP controls and faststart preference
+- [ ] Preserve visible keyboard focus and user-adjustable pane widths across sessions; measure queue performance with thousands of jobs
+- [ ] True two-pass encoding, encoder capability detection, measurable speed benchmarks and a media corpus

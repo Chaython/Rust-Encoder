@@ -55,6 +55,14 @@ Every successful build of `main` updates the [Rolling prerelease](https://github
 All three platforms must finish compiling and testing before the release is updated. Pull requests and version-tag builds cannot overwrite the rolling release.
 The reusable `rolling` tag advances to the exact tested commit; the release URL stays the same between builds.
 FFmpeg, FFprobe, optional FFplay, code signing, and native installers are **not** included in these portable archives.
+## Streamlined workspace and encoding performance
+
+The desktop layout is adaptive: **three separate panes** on a wide screen (searchable file queue and function selector; large central media preview; independently scrolling encoding options). Medium screens use two columns and narrow windows stack panels. A **Compact** queue option reduces per-file UI widget and text overhead for large batches; turn it off for detailed file cards and per-job metadata. Presets are grouped by video, stream copy, audio, images/subtitles and analysis.
+
+Video functions now support **constant-quality (CRF) or target-bitrate** encoding, a configurable optional peak bitrate/buffer, Fast/Balanced/Quality software encoder speed, a CPU thread limit, adjustable GOP/keyframe interval and MP4 faststart toggle. AV1, VP9, x264 and x265 use codec-appropriate speed controls. On compatible hardware encoders the target-bitrate option configures output bitrate, but rate-control support is driver- and FFmpeg-build-dependent.
+
+For identical output quality, speed settings change encoding time and compression efficiency rather than promising a universal speedup; the hardware backend and video filters remain performance bottlenecks. Estimates based on input duration and video/audio bitrates are approximate, not guarantees. Existing JSON profiles load with backward-compatible defaults.
+
 ## Media output / presets
 
 1. Add source files via picker or drop. Wait for FFprobe to inspect them.

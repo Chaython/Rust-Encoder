@@ -65,3 +65,9 @@ No realtime video player, synchronized waveform/editor timeline, bulk image sequ
 - Verify a saved invalid executable override is cleared and queued file imports are probed after installation.
 - Verify interrupted downloads, permission failures, unsupported CPU architectures, and offline startup show actionable errors without blocking the GUI.
 - Do not include third-party FFmpeg binaries in the project's own release ZIPs without additional licensing review.
+
+## Workspace and bitrate option regression coverage
+- Verify three-pane layout at 1250px+ widths, two-column layout at 870px–1249px and stacked layout below 870px; confirm the footer stays visible and both settings and media preview scroll independently.
+- Toggle compact queue with many source items and filter by filename; selected, running and failed jobs must keep working even when hidden by filtering.
+- Confirm switching between CRF and target bitrate does not supply conflicting FFmpeg flags; verify peak bitrate buffer and GOP/threads/speed settings in the unit tests. Test H.264 actual bitrate output through generated fixture media on Linux CI.
+- Software speed presets are codec-specific; manual benchmarking and GPU encoder validation remain necessary.
