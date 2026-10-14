@@ -38,6 +38,9 @@ jobs:
         run: cargo check --all-targets
       - name: Test
         run: cargo test --all-targets
+      - name: Verify first-run FFmpeg download on Windows
+        if: runner.os == 'Windows' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: cargo test --lib dependencies::tests::bootstrap_downloads_and_validates_real_ffmpeg -- --ignored --exact
       - name: Lint
         run: cargo clippy --all-targets
       - name: Build release binary
