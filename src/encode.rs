@@ -877,7 +877,7 @@ mod tests {
         let mut settings = options(Preset::Av1);
         settings.output_bit_depth = 10;
         settings.color_signal = ColorSignal::Bt2020Pq;
-        let result: Vec<_> = build_args(&input, &input.with_extension("mkv"), &settings)
+        let result: Vec<_> = build_args(&input, &input.with_extension("av1.mkv"), &settings)
             .unwrap().into_iter().map(|a| a.to_string_lossy().into_owned()).collect();
         assert!(result.windows(2).any(|p| p[0] == "-pix_fmt" && p[1] == "yuv420p10le"));
         assert!(result.windows(2).any(|p| p[0] == "-svtav1-params"
