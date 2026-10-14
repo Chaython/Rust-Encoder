@@ -1634,6 +1634,16 @@ impl EncoderApp {
 /// Clear invisible, incompatible options after preset or GPU switches.
 /// Validation in the encoding worker remains authoritative.
 fn sanitize_codec_settings(settings: &mut Settings) {
+    // VideoToolbox's quality slider is not mapped to a native quality mode.
+    // Switch to the supported bitrate control before queueing a job.
+    if matches!(settings.preset, Preset::H264 | Preset::H265)
+        && settings.hardware_encoder == HardwareEncoder::VideoToolbox {
+        settings.use_video_bitrate = true;
+    }
+    if matches!(settings.preset, Preset::ProRes | Preset::Dnxhr) {
+        settings.use_video_bitrate = false;
+        settings.max_video_bitrate_kbps = 0;
+    }
     let software_10 = matches!(settings.preset, Preset::H265 | Preset::Av1)
         && settings.hardware_encoder == HardwareEncoder::Software;
     let depth_selectable = matches!(
