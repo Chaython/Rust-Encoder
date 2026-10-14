@@ -436,6 +436,28 @@ fn temporary_output(output: &Path, id: u64) -> Result<PathBuf, String> {
 }
 
 /// Atomic no-clobber hard link where supported; otherwise exclusive create + copy.
+/// If another job wins the original output name during encoding, retry
+/// with a fresh suffix. Never replace an existing file, even across races.
+fn finalize_with_retry(
+    temp: &Path, input: &Path, options: &EncodeOptions, initial: &Path,
+) -> Result<PathBuf, String> {
+    let mut destination = initial.to_owned();
+    for _ in 0..16 {
+        match finalize_output(temp, &destination) {
+            Ok(()) => return Ok(destination),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                destination = output_path(input, options)?;
+            }
+            Err(error) => return Err(format!(
+                "Could not finalize output {}: {error}; intermediate file: {}",
+                destination.display(), temp.display())),
+        }
+    }
+    Err(format!(
+        "Could not find an uncontended output filename after 16 attempts; intermediate file: {}",
+        temp.display()))
+}
+
 fn finalize_output(temp: &Path, output: &Path) -> std::io::Result<()> {
     match fs::hard_link(temp, output) {
         Ok(()) => { let _ = fs::remove_file(temp); Ok(()) }
@@ -704,27 +726,7 @@ fn run_job(
             options.preset, input.display(), diagnostics.join("\n")))
             .map_err(|error| format!("Could not save media analysis report: {error}"))?;
     }
-    // Another queued job may have claimed the chosen filename while this
-    // encode was running. Keep the original output intact and find a free
-    // suffix instead of failing an otherwise successful transcode.
-    let mut destination = output.clone();
-    let mut finalized = false;
-    for _ in 0..16 {
-        match finalize_output(&temp, &destination) {
-            Ok(()) => { finalized = true; break; }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                destination = output_path(input, options)?;
-            }
-            Err(error) => return Err(format!(
-                "Could not finalize output {}: {error}; intermediate file: {}",
-                destination.display(), temp.display())),
-        }
-    }
-    if !finalized {
-        return Err(format!(
-            "Could not find an uncontended output filename after 16 attempts; intermediate file: {}",
-            temp.display()));
-    }
+    let destination = finalize_with_retry(&temp, input, options, &output)?;
     let _ = tx.send(Event::Completed { id, output: destination });
     Ok(())
 }
@@ -789,8 +791,8 @@ mod tests {
         fs::write(&initially_free, b"other job").unwrap();
         let temp = temporary_output(&initially_free, 900).unwrap();
         fs::write(&temp, b"encoded payload").unwrap();
-        let new_destination = output_path(&input, &o).unwrap();
-        finalize_output(&temp, &new_destination).unwrap();
+        let new_destination = finalize_with_retry(&temp, &input, &o, &initially_free).unwrap();
+        assert_ne!(new_destination, initially_free);
         assert_eq!(fs::read(&initially_free).unwrap(), b"other job");
         assert_eq!(fs::read(&new_destination).unwrap(), b"encoded payload");
         assert!(!temp.exists());
