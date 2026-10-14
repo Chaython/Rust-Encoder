@@ -1143,6 +1143,7 @@ impl EncoderApp {
                 self.settings.audio_channels = 0;
                 self.settings.audio_sample_rate = 0;
                 self.settings.audio_gain_db = 0.0;
+                self.settings.normalize_audio = false;
             }
             if !self.settings.preset.video() {
                 self.settings.target_width = 0;
@@ -1312,9 +1313,9 @@ impl EncoderApp {
                     ui.label("Audio bitrate (kb/s)");
                     changed |= ui.add(egui::Slider::new(&mut self.settings.audio_bitrate_kbps, 32..=512)).changed();
                 }
-                if self.settings.preset.video() || self.settings.preset.audio_only()
-                    || matches!(self.settings.preset, Preset::SilenceDetect | Preset::LoudnessReport) {
-                    changed |= ui.checkbox(&mut self.settings.normalize_audio, "Normalize loudness (one-pass)").changed();
+                if self.settings.preset.video() || self.settings.preset.audio_only() {
+                    changed |= ui.add_enabled(self.settings.audio_stream != -2,
+                        egui::Checkbox::new(&mut self.settings.normalize_audio, "Normalize loudness (one-pass)")).changed();
                     if self.settings.preset.video() || self.settings.preset.audio_only() {
                         ui.separator();
                         ui.label("Output channels");
