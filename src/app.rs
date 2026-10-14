@@ -116,7 +116,8 @@ impl EncoderApp {
         let (sender, receiver) = crossbeam_channel::unbounded();
         let (dependency_sender, dependency_receiver) = crossbeam_channel::unbounded();
         let (hardware_sender, hardware_receiver) = crossbeam_channel::unbounded();
-        let settings = model::load_settings();
+        let mut settings = model::load_settings();
+        sanitize_codec_settings(&mut settings);
         // Unit tests construct the GUI without a running desktop session.
         // Never trigger external network installers merely by constructing a test app.
         if !cfg!(test) {
@@ -212,6 +213,7 @@ impl EncoderApp {
     }
 
     fn mark_settings_changed(&mut self) {
+        sanitize_codec_settings(&mut self.settings);
         self.dirty_since = Some(Instant::now());
         self.update_pending_options();
     }
@@ -1617,6 +1619,30 @@ impl EncoderApp {
 
 /// Filter only the indices, not entire job clones; empty query avoids filename
 /// conversion. Virtual scrolling only builds UI widgets for visible indices.
+/// Clear invisible, incompatible options after preset or GPU switches.
+/// Validation in the encoding worker remains authoritative.
+fn sanitize_codec_settings(settings: &mut Settings) {
+    let software_10 = matches!(settings.preset, Preset::H265 | Preset::Av1)
+        && settings.hardware_encoder == HardwareEncoder::Software;
+    let depth_selectable = matches!(
+        settings.preset, Preset::H264 | Preset::H265 | Preset::Av1 | Preset::Vp9
+    );
+    if !depth_selectable || (settings.output_bit_depth == 10 && !software_10) {
+        settings.output_bit_depth = 0;
+    }
+    if !depth_selectable {
+        settings.color_signal = ColorSignal::Automatic;
+    }
+    if matches!(settings.color_signal, ColorSignal::Bt2020Pq | ColorSignal::Bt2020Hlg)
+        && (!software_10 || settings.output_bit_depth != 10) {
+        settings.color_signal = ColorSignal::Automatic;
+    }
+    let two_pass_supported = matches!(settings.preset, Preset::H264 | Preset::H265 | Preset::Vp9)
+        && settings.hardware_encoder == HardwareEncoder::Software
+        && settings.use_video_bitrate;
+    if !two_pass_supported { settings.two_pass = false; }
+}
+
 fn matching_jobs(jobs: &[Job], filter: &str) -> Vec<usize> {
     if filter.is_empty() { return (0..jobs.len()).collect(); }
     let filter = filter.to_lowercase();
@@ -1802,6 +1828,36 @@ mod tests {
             speed: String::new(),
             pass: 1,
         }
+    }
+
+    #[test]
+    fn incompatible_precision_and_bitrate_options_are_cleared() {
+        let mut settings = Settings::default();
+        settings.preset = Preset::H265;
+        settings.output_bit_depth = 10;
+        settings.color_signal = ColorSignal::Bt2020Pq;
+        settings.use_video_bitrate = true;
+        settings.two_pass = true;
+        sanitize_codec_settings(&mut settings);
+        assert_eq!(settings.output_bit_depth, 10);
+        assert_eq!(settings.color_signal, ColorSignal::Bt2020Pq);
+        assert!(settings.two_pass);
+
+        settings.preset = Preset::H264;
+        sanitize_codec_settings(&mut settings);
+        assert_eq!(settings.output_bit_depth, 0);
+        assert_eq!(settings.color_signal, ColorSignal::Automatic);
+        assert!(settings.two_pass); // H.264 supports software two-pass
+
+        settings.hardware_encoder = HardwareEncoder::Nvenc;
+        sanitize_codec_settings(&mut settings);
+        assert!(!settings.two_pass);
+        settings.preset = Preset::RemuxMkv;
+        settings.output_bit_depth = 8;
+        settings.color_signal = ColorSignal::Bt709;
+        sanitize_codec_settings(&mut settings);
+        assert_eq!(settings.output_bit_depth, 0);
+        assert_eq!(settings.color_signal, ColorSignal::Automatic);
     }
 
     #[test]
