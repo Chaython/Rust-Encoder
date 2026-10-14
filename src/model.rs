@@ -296,11 +296,15 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
     let path = settings_path().ok_or(std::io::Error::other("config directory unavailable"))?;
     if let Some(parent) = path.parent() { std::fs::create_dir_all(parent)?; }
     let content = serde_json::to_vec_pretty(settings).map_err(std::io::Error::other)?;
-    // A failed write never truncates the last good settings file.
+    save_settings_bytes(&path, &content)
+}
+
+/// Rename replaces the destination on modern Windows and Unix. In particular,
+/// never delete the previous settings before the replacement: if replacement
+/// fails (e.g. antivirus holds the file), the old settings remain intact.
+fn save_settings_bytes(path: &Path, content: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, content)?;
-    #[cfg(windows)]
-    if path.exists() { std::fs::remove_file(&path)?; }
     std::fs::rename(tmp, path)
 }
 
@@ -314,6 +318,17 @@ mod tests {
             assert!(!preset.label().is_empty());
         }
     }
+    #[test]
+    fn settings_replace_keeps_only_new_valid_document() {
+        let root = std::env::temp_dir().join(format!("encoder-settings-test-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        std::fs::write(&path, br#"{"preset":"H264"}"#).unwrap();
+        save_settings_bytes(&path, br#"{"preset":"Flac"}"#).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), br#"{"preset":"Flac"}"#);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn settings_json_roundtrip() {
         let mut a = Settings::default();

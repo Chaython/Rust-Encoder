@@ -473,8 +473,7 @@ impl EncoderApp {
 
         let mut remove_id = None;
         let mut retry_id = None;
-        let filter = self.queue_filter.trim().to_lowercase();
-        let visible = matching_jobs(&self.jobs, &filter);
+        let visible = matching_jobs(&self.jobs, self.queue_filter.trim());
         if self.jobs.is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(20.0);
@@ -1488,6 +1487,7 @@ impl EncoderApp {
 /// conversion. Virtual scrolling only builds UI widgets for visible indices.
 fn matching_jobs(jobs: &[Job], filter: &str) -> Vec<usize> {
     if filter.is_empty() { return (0..jobs.len()).collect(); }
+    let filter = filter.to_lowercase();
     jobs.iter().enumerate().filter_map(|(index, job)| {
         job.input.to_string_lossy().to_lowercase().contains(filter).then_some(index)
     }).collect()
@@ -1496,7 +1496,8 @@ fn matching_jobs(jobs: &[Job], filter: &str) -> Vec<usize> {
 /// Fractions are persisted so the three-pane layout scales with the monitor.
 /// Clamp corrupt/legacy values and reserve a useful video preview minimum.
 fn pane_widths(total: f32, left_fraction: f32, right_fraction: f32) -> (f32, f32, f32) {
-    let usable = (total - 24.0).max(900.0);
+    // Reserve both 12-point drag targets plus egui's horizontal widget spacing.
+    let usable = (total - 64.0).max(900.0);
     let left_fraction = if left_fraction.is_finite() { left_fraction } else { 0.21 };
     let right_fraction = if right_fraction.is_finite() { right_fraction } else { 0.29 };
     let left = (usable * left_fraction).clamp(220.0, (usable - 675.0).min(470.0));
@@ -1559,8 +1560,8 @@ impl eframe::App for EncoderApp {
                 if drag_left.dragged() {
                     let delta = ui.ctx().input(|input| input.pointer.delta().x);
                     if delta != 0.0 {
-                        let new_left = (left + delta).clamp(220.0, width - right - 350.0);
-                        self.settings.workspace_left_fraction = new_left / (width - 24.0);
+                        let new_left = (left + delta).clamp(220.0, width - 64.0 - right - 350.0);
+                        self.settings.workspace_left_fraction = new_left / (width - 64.0);
                         self.mark_settings_changed();
                     }
                 }
@@ -1577,8 +1578,8 @@ impl eframe::App for EncoderApp {
                 if drag_right.dragged() {
                     let delta = ui.ctx().input(|input| input.pointer.delta().x);
                     if delta != 0.0 {
-                        let new_right = (right - delta).clamp(325.0, width - left - 350.0);
-                        self.settings.workspace_right_fraction = new_right / (width - 24.0);
+                        let new_right = (right - delta).clamp(325.0, width - 64.0 - left - 350.0);
+                        self.settings.workspace_right_fraction = new_right / (width - 64.0);
                         self.mark_settings_changed();
                     }
                 }
@@ -1692,7 +1693,7 @@ mod tests {
             for (a, b) in [(0.21, 0.29), (0.9, 0.95), (-10.0, 4.0), (f32::NAN, f32::INFINITY)] {
                 let (left, center, right) = pane_widths(total, a, b);
                 assert!(left >= 220.0 && right >= 325.0 && center >= 350.0);
-                assert!((left + center + right - (total - 24.0)).abs() < 0.01);
+                assert!((left + center + right - (total - 64.0)).abs() < 0.01);
             }
         }
     }
