@@ -86,7 +86,7 @@ Rust Encoder source is GPL-3.0-or-later; see [LICENSE](LICENSE). It is not affil
 
 ### Video precision and color tags
 
-For H.264/H.265/AV1/VP9, the codec pane now offers an encoder-default or explicit 8-bit 4:2:0 pixel format. **Software H.265 and AV1** additionally offer 10-bit 4:2:0 (HEVC Main10). The color signal options are automatic, BT.709 SDR, BT.2020 PQ/HDR10 and BT.2020 HLG. HDR metadata choices require 10-bit H.265/AV1, and H.265 writes the corresponding x265 VUI tags. These are **metadata only, not tone mapping, grading, gamut conversion or SDR-to-HDR**: select HDR signaling only for source footage already mastered in the specified transfer. The program does not guarantee HDR10 static mastering metadata (MaxCLL/MaxFALL) yet. Hardware 10-bit output is disabled until hardware-specific compatibility checks are implemented.
+For H.264/H.265/AV1/VP9, the codec pane now offers an encoder-default or explicit 8-bit 4:2:0 pixel format. **Software H.265, AV1 and VP9** additionally offer 10-bit 4:2:0 (HEVC Main10 or VP9 Profile 2 as appropriate). VP9 Profile 2 depends on a compatible libvpx-vp9 build; HDR PQ/HLG signaling remains limited to software H.265 and AV1. The color signal options are automatic, BT.709 SDR, BT.2020 PQ/HDR10 and BT.2020 HLG. HDR metadata choices require 10-bit H.265/AV1, and H.265 writes the corresponding x265 VUI tags. These are **metadata only, not tone mapping, grading, gamut conversion or SDR-to-HDR**: select HDR signaling only for source footage already mastered in the specified transfer. The program does not guarantee HDR10 static mastering metadata (MaxCLL/MaxFALL) yet. Hardware 10-bit output is disabled until hardware-specific compatibility checks are implemented.
 
 ### Genuine two-pass HEVC (x265)
 
