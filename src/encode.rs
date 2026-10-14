@@ -93,8 +93,10 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     if !options.audio_gain_db.is_finite() || !(-30.0..=30.0).contains(&options.audio_gain_db) {
         return Err("Audio gain must be finite and between -30 and +30 dB".into());
     }
+    // All audio filters, including loudness normalization, require an encoder.
+    // Never silently discard a requested normalization during stream copy.
     let audio_processing = options.audio_channels != 0 || options.audio_sample_rate != 0
-        || options.audio_gain_db != 0.0;
+        || options.audio_gain_db != 0.0 || options.normalize_audio;
     if audio_processing && !(options.preset.video() || options.preset.audio_only()) {
         return Err("Audio processing requires an encoding preset, not stream copy or analysis".into());
     }
@@ -815,6 +817,22 @@ mod tests {
         let mut o = options(Preset::RemuxMp4);
         o.deinterlace = true;
         assert!(validate_options(&o).is_err());
+    }
+    #[test]
+    fn normalization_cannot_be_silently_dropped_or_run_without_audio() {
+        for preset in [Preset::RemuxMkv, Preset::RemuxMp4,
+            Preset::VideoOnly, Preset::FrameMd5, Preset::LoudnessReport] {
+            let mut o = options(preset);
+            o.normalize_audio = true;
+            assert!(validate_options(&o).is_err(), "{preset:?} should reject normalization");
+        }
+        for preset in [Preset::H264, Preset::H265, Preset::Wav, Preset::Flac] {
+            let mut o = options(preset);
+            o.normalize_audio = true;
+            assert!(validate_options(&o).is_ok(), "{preset:?} should allow normalization");
+            o.audio_stream = -2;
+            assert!(validate_options(&o).is_err(), "{preset:?} cannot normalize disabled audio");
+        }
     }
     #[test]
     fn bitrate_speed_and_gop_controls_generate_valid_ffmpeg_options() {
