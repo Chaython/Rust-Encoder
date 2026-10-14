@@ -18,6 +18,7 @@ See [FEATURE_PARITY.md](FEATURE_PARITY.md) for a more granular list. A checked e
 ## Editing, analysis and specialist tools
 - [x] Initial interactive timeline: seeking, In/Out marks, frame stepping and sampled video preview with first-audio waveform
 - [x] Optional managed FFplay companion for synchronized audio/video review from a timeline position and Out point
+- [x] Continuous silent embedded 24 FPS preview via bounded, cancellable FFmpeg raw-frame decoder
 - [ ] Synchronized native audio/video playback, multitrack waveforms, continuous decoder, multi-point editing
 - [ ] Frame-accurate cuts, EDL/XML/project interchange, retiming and merge pipelines
 - [ ] Advanced detection thresholds, offline detection, VMAF and comparative analysis

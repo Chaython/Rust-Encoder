@@ -5,6 +5,7 @@ use rust_encoder::{
     media::{self, MediaInfo},
     model::{self, EncodeOptions, HardwareEncoder, Preset, Settings},
     player::{self, PlaybackSession},
+    preview_stream::{self, NativeVideoPreview},
 };
 use std::{
     path::PathBuf,
@@ -71,6 +72,8 @@ pub struct EncoderApp {
     preview_loading: bool,
     preview_playing: bool,
     av_player: Option<PlaybackSession>,
+    native_video: Option<NativeVideoPreview>,
+    native_error: Option<String>,
     preview_last_tick: Instant,
     waveform_for: Option<u64>,
     waveform_pixels: Option<media::Thumbnail>,
@@ -102,6 +105,8 @@ impl EncoderApp {
             preview_loading: false,
             preview_playing: false,
             av_player: None,
+            native_video: None,
+            native_error: None,
             preview_last_tick: Instant::now(),
             waveform_for: None,
             waveform_pixels: None,
@@ -430,6 +435,8 @@ impl EncoderApp {
             self.preview_loading = false;
             self.preview_playing = false;
             self.av_player = None;
+            self.native_video = None;
+            self.native_error = None;
             self.preview_pixels = None;
             self.preview_texture = None;
             self.preview_error = None;
@@ -454,7 +461,7 @@ impl EncoderApp {
                     job.input.clone(), self.sender.clone());
             }
         }
-        if info.video_codec.is_none() { return; }
+        if info.video_codec.is_none() || self.native_video.is_some() { return; }
         let seek_ms = (self.preview_requested_seconds.max(0.0) * 1000.0).round() as u64;
         if self.preview_loading || self.preview_for == Some((id, seek_ms)) { return; }
         self.preview_for = Some((id, seek_ms));
@@ -465,6 +472,58 @@ impl EncoderApp {
             model::resolve_tool("ffmpeg", &self.settings.ffmpeg_path),
             job.input.clone(), self.sender.clone(),
         );
+    }
+
+    fn stop_native_video(&mut self) {
+        self.native_video = None;
+        self.preview_for = None;
+        self.preview_loading = false;
+        self.preview_requested_seconds = self.preview_seconds;
+    }
+
+    fn launch_native_video(&mut self, job_id: u64, input: PathBuf,
+                           position: f64, stop: Option<f64>) {
+        self.stop_native_video();
+        self.av_player = None;
+        self.preview_playing = false;
+        self.native_error = None;
+        let ffmpeg = model::resolve_tool("ffmpeg", &self.settings.ffmpeg_path);
+        match NativeVideoPreview::launch(job_id, &ffmpeg, &input, position, stop) {
+            Ok(session) => {
+                self.native_video = Some(session);
+                self.notice.clear();
+            }
+            Err(error) => self.native_error = Some(error),
+        }
+    }
+
+    fn update_native_video(&mut self, ctx: &egui::Context) {
+        if self.native_video.as_ref().is_some_and(|stream| self.selected_job != Some(stream.job_id)) {
+            self.stop_native_video();
+        }
+        let mut ended = None;
+        if let Some(stream) = self.native_video.as_ref() {
+            if let Some(frame) = stream.newest_frame() {
+                let image = egui::ColorImage::from_rgba_unmultiplied(
+                    [preview_stream::WIDTH, preview_stream::HEIGHT], &frame.rgba
+                );
+                if let Some(texture) = self.preview_texture.as_mut() {
+                    texture.set(image, egui::TextureOptions::LINEAR);
+                } else {
+                    self.preview_texture = Some(ctx.load_texture(
+                        "native-stream-frame", image, egui::TextureOptions::LINEAR
+                    ));
+                }
+                self.preview_seconds = frame.position;
+                self.preview_requested_seconds = frame.position;
+                ctx.request_repaint();
+            }
+            ended = stream.try_finished();
+        }
+        if let Some(result) = ended {
+            self.stop_native_video();
+            if let Err(error) = result { self.native_error = Some(error); }
+        }
     }
 
     fn refresh_av_player(&mut self) {
@@ -495,6 +554,7 @@ impl EncoderApp {
     fn launch_av_preview(&mut self, job_id: u64, input: PathBuf,
                          position: f64, stop: Option<f64>) {
         self.av_player = None;
+        self.stop_native_video();
         self.preview_playing = false;
         let binary = player::resolve_ffplay(&self.settings);
         match PlaybackSession::launch(job_id, &binary, &input, position, stop) {
@@ -595,6 +655,29 @@ impl EncoderApp {
                 }
             });
             ui.small("FFplay opens a separate synchronized audio/video player. Space pauses there, arrows seek; close it or Stop A/V to exit.");
+            if let Some(error) = &self.native_error {
+                ui.colored_label(egui::Color32::LIGHT_RED, format!("Embedded preview: {error}"));
+            }
+            ui.horizontal_wrapped(|ui| {
+                let live = self.native_video.as_ref().is_some_and(|p| Some(p.job_id) == self.selected_job);
+                if ui.add_enabled(info.video_codec.is_some(),
+                    egui::Button::new(if live { "▶ Restart embedded video" } else { "▶ Embedded video (silent)" })).clicked()
+                    && let Some(job) = self.jobs.iter().find(|j| Some(j.id) == self.selected_job)
+                {
+                    let (position, until) = info.duration_sec.map(|duration| {
+                        let (start, end) = preview_bounds(duration, self.settings.start_seconds, self.settings.end_seconds);
+                        let position = if self.preview_seconds >= start && self.preview_seconds < end {
+                            self.preview_seconds
+                        } else { start };
+                        (position, Some(end))
+                    }).unwrap_or((self.preview_seconds.max(0.0), None));
+                    self.launch_native_video(job.id, job.input.clone(), position, until);
+                }
+                if ui.add_enabled(live, egui::Button::new("■ Stop embedded")).clicked() {
+                    self.stop_native_video();
+                }
+            });
+            ui.small("Embedded preview streams video continuously at up to 24 FPS without audio; use the FFplay window for synchronized A/V.");
             if let Some(texture) = &self.waveform_texture {
                 let size = egui::vec2(ui.available_width().max(100.0), 64.0);
                 ui.image((texture.id(), size));
@@ -635,6 +718,7 @@ impl EncoderApp {
                         .clamp(0.0, duration);
                     self.preview_requested_seconds = self.preview_seconds;
                     self.preview_playing = false;
+                    self.stop_native_video();
                     ui.ctx().request_repaint();
                 }
                 let frame_step = 1.0 / info.video_frame_rate.unwrap_or(30.0);
@@ -647,6 +731,7 @@ impl EncoderApp {
                             self.preview_seconds = start;
                             self.preview_requested_seconds = start;
                         }
+                        self.stop_native_video();
                         self.preview_playing = !self.preview_playing;
                         self.preview_last_tick = Instant::now();
                     }
@@ -685,6 +770,7 @@ impl EncoderApp {
                     ui.small(format!("Selection: {:.2}–{:.2}s", start, end));
                 });
                 if seek_changed {
+                    self.stop_native_video();
                     self.preview_requested_seconds = self.preview_seconds;
                     self.preview_playing = false;
                 }
@@ -701,7 +787,7 @@ impl EncoderApp {
                 }
             });
         }
-        ui.small("The built-in timeline still samples silent frames (up to 4 FPS). FFplay provides synchronized A/V in a separate window; native embedded playback, wave editing and multi-cut EDL remain unported.");
+        ui.small("Embedded video supports continuous silent 24 FPS decoding. FFplay handles synchronized A/V in a separate window; native embedded audio, wave editing and multi-cut EDL remain unported.");
     }
 
     fn options_ui(&mut self, ui: &mut egui::Ui) {
@@ -1067,6 +1153,7 @@ impl eframe::App for EncoderApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_events();
         self.refresh_av_player();
+        self.update_native_video(ui.ctx());
         let dropped_files: Vec<PathBuf> = ui.ctx().input(|input| input.raw.dropped_files.iter()
             .map(|file| file.path().to_path_buf()).collect());
         if !dropped_files.is_empty() { self.add_files(dropped_files); }
@@ -1118,6 +1205,7 @@ impl eframe::App for EncoderApp {
         if self.current.is_some()
             || self.jobs.iter().any(|j| matches!(j.status, JobState::Analyzing))
             || self.preview_loading || self.preview_playing || self.av_player.is_some()
+            || self.native_video.is_some()
         {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
         }
@@ -1128,6 +1216,7 @@ impl Drop for EncoderApp {
     fn drop(&mut self) {
         // Drop the managed FFplay child before releasing encoder state.
         self.av_player = None;
+        self.stop_native_video();
         if self.dirty_since.is_some() {
             let _ = model::save_settings(&self.settings);
         }

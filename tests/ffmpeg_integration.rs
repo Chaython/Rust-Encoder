@@ -1,6 +1,6 @@
 //! End-to-end FFmpeg tests. Skipped on development machines without FFmpeg.
 //! Linux CI installs FFmpeg so these are exercised there.
-use rust_encoder::{encode, model::{HardwareEncoder, EncodeOptions, Preset}};
+use rust_encoder::{encode, preview_stream, model::{HardwareEncoder, EncodeOptions, Preset}};
 use std::{fs, path::{Path, PathBuf}, process::Command,
     sync::{Arc, atomic::AtomicBool}, time::Duration};
 
@@ -110,5 +110,27 @@ fn media_waveform_and_frame_rate_probe_work() {
     assert_eq!(waveform.rgba.len(), 900 * 120 * 4);
     let still = rust_encoder::media::thumbnail_file_at(Path::new("ffmpeg"), &input, 0.5).unwrap();
     assert!(still.width > 0 && still.height > 0);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn embedded_preview_streams_real_decoded_frames_and_can_cancel() {
+    if !ffmpeg_available() { eprintln!("Skipping stream preview: FFmpeg missing"); return; }
+    let dir = std::env::temp_dir().join(format!("rust-encoder-stream-e2e-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let input = fixture(&dir);
+    let stream = preview_stream::NativeVideoPreview::launch(
+        10, Path::new("ffmpeg"), &input, 0.0, Some(0.8)).unwrap();
+    let start = std::time::Instant::now();
+    let frame = loop {
+        if let Some(frame) = stream.newest_frame() { break frame; }
+        if start.elapsed() > Duration::from_secs(20) { panic!("No decoded video frame"); }
+        std::thread::sleep(Duration::from_millis(30));
+    };
+    assert_eq!(frame.rgba.len(), preview_stream::WIDTH * preview_stream::HEIGHT * 4);
+    assert!(frame.position.is_finite());
+    stream.stop();
+    drop(stream);
     fs::remove_dir_all(dir).unwrap();
 }
