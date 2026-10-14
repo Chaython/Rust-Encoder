@@ -311,6 +311,11 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
                     arg!("-c:v"); arg!(codec);
                     if bitrate {
                         if o.hardware_encoder == HardwareEncoder::Amf { arg!("-rc"); arg!("vbr_peak"); }
+                        if o.hardware_encoder == HardwareEncoder::Nvenc {
+                            // NVENC VBR target bitrate requires an explicit RC mode
+                            // to avoid inheriting driver-dependent defaults.
+                            arg!("-rc"); arg!("vbr");
+                        }
                         arg!("-b:v"); arg!(&format!("{}k", o.video_bitrate_kbps));
                     } else {
                         match o.hardware_encoder {
@@ -1224,6 +1229,24 @@ mod tests {
         o.use_video_bitrate = true;
         assert!(validate_options(&o).is_ok());
     }
+    #[test]
+    fn nvenc_target_bitrate_explicitly_uses_vbr() {
+        let dir = std::env::temp_dir().join(format!(
+            "rust-encoder-nvenc-vbr-{}-{:?}", std::process::id(), std::thread::current().id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.mkv");
+        fs::write(&input, b"fixture").unwrap();
+        let mut o = options(Preset::H264);
+        o.hardware_encoder = HardwareEncoder::Nvenc;
+        o.use_video_bitrate = true;
+        o.video_bitrate_kbps = 4500;
+        let args = build_args(&input, &dir.join("output.mp4"), &o).unwrap();
+        assert!(args.windows(2).any(|p| p[0] == "-rc" && p[1] == "vbr"));
+        assert!(args.windows(2).any(|p| p[0] == "-b:v" && p[1] == "4500k"));
+        assert!(!args.iter().any(|p| p == "-cq"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn hardware_quality_modes_emit_backend_specific_arguments() {
         let dir = std::env::temp_dir().join(format!(
