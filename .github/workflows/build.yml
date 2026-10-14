@@ -38,7 +38,7 @@ jobs:
       - name: Lint
         run: cargo clippy --all-targets
       - name: Build release binary
-        run: cargo build --release --locked
+        run: cargo build --release
       - name: Package portable binary
         shell: python
         run: |
