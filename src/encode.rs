@@ -153,6 +153,17 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
     validate_options(o)?;
     if !input.is_file() { return Err("Input does not exist".into()); }
     if input == temp_output { return Err("Input and output must differ".into()); }
+    // Guard against an existing output that aliases the source through a
+    // relative path or symlink. FFmpeg's -n is not a substitute for this check.
+    if temp_output.exists() {
+        let source = fs::canonicalize(input)
+            .map_err(|error| format!("Cannot resolve input path: {error}"))?;
+        let destination = fs::canonicalize(temp_output)
+            .map_err(|error| format!("Cannot resolve output path: {error}"))?;
+        if source == destination {
+            return Err("Input and output resolve to the same file".into());
+        }
+    }
 
     let loglevel = if o.preset.report() { "info" } else { "error" };
     let mut args: Vec<OsString> = ["-nostdin", "-hide_banner", "-loglevel", loglevel, "-nostats",
@@ -745,6 +756,18 @@ mod tests {
         let path = output_path(&tmp.join("sample.mp4"), &o).unwrap();
         assert_ne!(path, tmp.join("sample.mp4"));
         assert_eq!(path.extension().and_then(|x| x.to_str()), Some("mp4"));
+    }
+    #[test]
+    fn existing_output_alias_cannot_replace_input() {
+        let dir = std::env::temp_dir().join(format!(
+            "rust-encoder-alias-{}-{:?}", std::process::id(), std::thread::current().id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("source.mp4");
+        fs::write(&input, b"original").unwrap();
+        let alias = dir.join(".").join("source.mp4");
+        assert!(build_args(&input, &alias, &options(Preset::H264)).is_err());
+        assert_eq!(fs::read(&input).unwrap(), b"original");
+        fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn args_do_not_require_shell_interpolation() {
