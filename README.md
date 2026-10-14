@@ -41,6 +41,12 @@ sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libwayland-dev libxcb-shap
 
 [Build workflow](.github/workflows/build.yml) runs source checks, tests, lint, release compilation, a headless `--version` startup test and uploads portable ZIPs on Windows/macOS/Linux. On Linux it also executes the FFmpeg integration tests against generated media. Binaries are not code-signed or notarized; a successful headless startup test does not prove that every native GUI control renders correctly.
 
+## Rolling release
+
+Every successful build of `main` updates the [Rolling prerelease](https://github.com/Chaython/Rust-Encoder/releases/tag/rolling) with verified Windows, Linux, and macOS portable ZIPs and `SHA256SUMS.txt`.
+All three platforms must finish compiling and testing before the release is updated. Pull requests and version-tag builds cannot overwrite the rolling release.
+The reusable `rolling` tag advances to the exact tested commit; the release URL stays the same between builds.
+FFmpeg, FFprobe, optional FFplay, code signing, and native installers are **not** included in these portable archives.
 ## Media output / presets
 
 1. Add source files via picker or drop. Wait for FFprobe to inspect them.
