@@ -67,6 +67,13 @@ pub struct EncoderApp {
     next_id: u64,
     selected_job: Option<u64>,
     preview_for: Option<(u64, u64)>,
+    preview_loading: bool,
+    preview_playing: bool,
+    preview_last_tick: Instant,
+    waveform_for: Option<u64>,
+    waveform_pixels: Option<media::Thumbnail>,
+    waveform_texture: Option<egui::TextureHandle>,
+    waveform_error: Option<String>,
     preview_owner: Option<u64>,
     preview_seconds: f64,
     preview_requested_seconds: f64,
@@ -90,6 +97,13 @@ impl EncoderApp {
             next_id: 1,
             selected_job: None,
             preview_for: None,
+            preview_loading: false,
+            preview_playing: false,
+            preview_last_tick: Instant::now(),
+            waveform_for: None,
+            waveform_pixels: None,
+            waveform_texture: None,
+            waveform_error: None,
             preview_owner: None,
             preview_seconds: 0.0,
             preview_requested_seconds: 0.0,
@@ -168,9 +182,31 @@ impl EncoderApp {
                 }
                 Event::PreviewReady { id, seek_ms, result } => {
                     if self.preview_for == Some((id, seek_ms)) {
+                        self.preview_loading = false;
+                        let requested_ms = (self.preview_requested_seconds.max(0.0) * 1000.0).round() as u64;
+                        if self.selected_job == Some(id) && requested_ms == seek_ms {
+                            match result {
+                                Ok(preview) => {
+                                    self.preview_pixels = Some(preview);
+                                    self.preview_error = None;
+                                }
+                                Err(message) => {
+                                    self.preview_texture = None;
+                                    self.preview_error = Some(message);
+                                }
+                            }
+                        } else {
+                            // A new seek superseded the request while FFmpeg was decoding.
+                            // Let ensure_preview send the latest request next frame.
+                            self.preview_for = None;
+                        }
+                    }
+                }
+                Event::WaveformReady { id, result } => {
+                    if self.waveform_for == Some(id) && self.selected_job == Some(id) {
                         match result {
-                            Ok(preview) => self.preview_pixels = Some(preview),
-                            Err(message) => self.preview_error = Some(message),
+                            Ok(waveform) => self.waveform_pixels = Some(waveform),
+                            Err(message) => self.waveform_error = Some(message),
                         }
                     }
                 }
@@ -380,33 +416,46 @@ impl EncoderApp {
         if let Some(id) = retry_id { self.retry_failed(id); }
     }
 
+    /// Keep at most one preview decode in flight per selected file. Rapid scrubs
+    /// supersede pending requests instead of starting an FFmpeg process per pixel.
     fn ensure_preview(&mut self) {
         if self.preview_owner != self.selected_job {
             self.preview_owner = self.selected_job;
             self.preview_seconds = 0.0;
             self.preview_requested_seconds = 0.0;
             self.preview_for = None;
+            self.preview_loading = false;
+            self.preview_playing = false;
+            self.preview_pixels = None;
+            self.preview_texture = None;
+            self.preview_error = None;
+            self.waveform_for = None;
+            self.waveform_pixels = None;
+            self.waveform_texture = None;
+            self.waveform_error = None;
         }
         let Some(id) = self.selected_job else { return; };
-        let seek_ms = (self.preview_requested_seconds.max(0.0) * 1000.0).round() as u64;
-        if self.preview_for == Some((id, seek_ms)) { return; }
-        self.preview_for = Some((id, seek_ms));
-        self.preview_texture = None;
-        self.preview_pixels = None;
-        self.preview_error = None;
         let Some(job) = self.jobs.iter().find(|j| j.id == id) else { return; };
         let Some(info) = &job.media else {
-            if matches!(job.status, JobState::Analyzing) {
-                self.preview_for = None;
-            } else {
-                self.preview_error = Some("No preview: media inspection did not succeed.".into());
+            if !matches!(job.status, JobState::Analyzing) {
+                self.preview_error = Some("Media inspection did not succeed.".into());
             }
             return;
         };
-        if info.video_codec.is_none() {
-            self.preview_error = Some("Audio-only media: no video frame to preview.".into());
-            return;
+        if self.waveform_for != Some(id) {
+            self.waveform_for = Some(id);
+            if !info.audio_tracks.is_empty() {
+                media::waveform_async(id,
+                    model::resolve_tool("ffmpeg", &self.settings.ffmpeg_path),
+                    job.input.clone(), self.sender.clone());
+            }
         }
+        if info.video_codec.is_none() { return; }
+        let seek_ms = (self.preview_requested_seconds.max(0.0) * 1000.0).round() as u64;
+        if self.preview_loading || self.preview_for == Some((id, seek_ms)) { return; }
+        self.preview_for = Some((id, seek_ms));
+        self.preview_loading = true;
+        self.preview_error = None;
         media::thumbnail_async(
             id, seek_ms,
             model::resolve_tool("ffmpeg", &self.settings.ffmpeg_path),
@@ -414,9 +463,30 @@ impl EncoderApp {
         );
     }
 
+    fn tick_playback(&mut self) {
+        if !self.preview_playing { return; }
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.preview_last_tick).as_secs_f64().min(0.4);
+        self.preview_last_tick = now;
+        let duration = self.jobs.iter().find(|j| Some(j.id) == self.selected_job)
+            .and_then(|j| j.media.as_ref())
+            .and_then(|m| m.duration_sec).unwrap_or(0.0);
+        if duration <= 0.0 { self.preview_playing = false; return; }
+        let (start, end) = preview_bounds(duration, self.settings.start_seconds, self.settings.end_seconds);
+        if self.preview_seconds < start { self.preview_seconds = start; }
+        self.preview_seconds = (self.preview_seconds + elapsed).min(end);
+        // Decoding one accurate still per 250 ms is bounded-cost and UI-safe;
+        // this is video-only sampled playback, not synchronized A/V playback.
+        let requested_bucket = (self.preview_seconds * 4.0).floor() / 4.0;
+        if requested_bucket > self.preview_requested_seconds || self.preview_seconds == end {
+            self.preview_requested_seconds = self.preview_seconds;
+        }
+        if self.preview_seconds >= end { self.preview_playing = false; }
+    }
+
     fn preview_ui(&mut self, ui: &mut egui::Ui) {
         ui.separator();
-        ui.heading("Media preview");
+        ui.heading("Media preview / trim timeline");
         if let Some(preview) = self.preview_pixels.take() {
             let image = egui::ColorImage::from_rgba_unmultiplied(
                 [preview.width, preview.height], &preview.rgba,
@@ -425,33 +495,130 @@ impl EncoderApp {
                 "selected-media-thumbnail", image, egui::TextureOptions::LINEAR,
             ));
         }
+        if let Some(waveform) = self.waveform_pixels.take() {
+            let image = egui::ColorImage::from_rgba_unmultiplied(
+                [waveform.width, waveform.height], &waveform.rgba,
+            );
+            self.waveform_texture = Some(ui.ctx().load_texture(
+                "selected-audio-waveform", image, egui::TextureOptions::LINEAR,
+            ));
+        }
         if let Some(texture) = &self.preview_texture {
             let size = texture.size_vec2();
-            let factor = (ui.available_width() / size.x).min(200.0 / size.y).min(1.0);
+            let factor = (ui.available_width() / size.x).min(190.0 / size.y).min(1.0);
             ui.vertical_centered(|ui| {
                 ui.image((texture.id(), size * factor.max(0.1)));
             });
         } else if let Some(error) = &self.preview_error {
             ui.small(error);
         } else if self.selected_job.is_some() {
-            ui.small("Generating a still-frame preview…");
+            if self.jobs.iter().find(|j| Some(j.id) == self.selected_job)
+                .and_then(|j| j.media.as_ref()).is_some_and(|m| m.video_codec.is_none()) {
+                ui.small("Audio-only media: waveform and timeline below.");
+            } else {
+                ui.small("Waiting for a video preview…");
+            }
         } else {
             ui.small("Select a file to inspect its video frame and metadata.");
         }
-        if let Some(job) = self.jobs.iter().find(|j| Some(j.id) == self.selected_job)
-            && let Some(info) = &job.media
-        {
+        let selected = self.jobs.iter().find(|j| Some(j.id) == self.selected_job)
+            .and_then(|j| j.media.as_ref()).cloned();
+        if let Some(info) = selected {
             ui.small(info.summary());
-            if let Some(duration) = info.duration_sec && info.video_codec.is_some() {
+            if let Some(texture) = &self.waveform_texture {
+                let size = egui::vec2(ui.available_width().max(100.0), 64.0);
+                ui.image((texture.id(), size));
+                ui.small("Waveform: first audio stream (whole file)");
+            } else if let Some(error) = &self.waveform_error {
+                ui.small(format!("Waveform: {error}"));
+            } else if !info.audio_tracks.is_empty() {
+                ui.small("Generating audio waveform…");
+            }
+            if let Some(duration) = info.duration_sec {
+                let (start, end) = preview_bounds(duration, self.settings.start_seconds, self.settings.end_seconds);
+                let width = ui.available_width().max(100.0);
+                let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 24.0),
+                    egui::Sense::click_and_drag());
+                let painter = ui.painter();
+                painter.rect_filled(rect, 4.0, ui.visuals().faint_bg_color);
+                let x_at = |seconds: f64| rect.left() + (seconds / duration).clamp(0.0, 1.0) as f32 * rect.width();
+                if end > start {
+                    painter.rect_filled(
+                        egui::Rect::from_min_max(egui::pos2(x_at(start), rect.top()),
+                            egui::pos2(x_at(end), rect.bottom())),
+                        2.0, egui::Color32::from_rgb(40, 105, 125));
+                }
+                for (timestamp, color) in [
+                    (start, egui::Color32::LIGHT_GREEN),
+                    (end, egui::Color32::LIGHT_RED),
+                    (self.preview_seconds, egui::Color32::YELLOW),
+                ] {
+                    let x = x_at(timestamp);
+                    painter.line_segment([egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+                        egui::Stroke::new(2.0, color));
+                }
+                if (response.clicked() || response.dragged())
+                    && let Some(pos) = response.interact_pointer_pos()
+                {
+                    self.preview_seconds = (duration *
+                        ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0) as f64)
+                        .clamp(0.0, duration);
+                    self.preview_requested_seconds = self.preview_seconds;
+                    self.preview_playing = false;
+                    ui.ctx().request_repaint();
+                }
+                let frame_step = 1.0 / info.video_frame_rate.unwrap_or(30.0);
+                let mut seek_changed = false;
                 ui.horizontal_wrapped(|ui| {
-                    ui.add(egui::Slider::new(&mut self.preview_seconds, 0.0..=duration)
-                        .text("Seek (s)").fixed_decimals(2));
-                    if ui.button("Preview frame").clicked() {
-                        self.preview_requested_seconds = self.preview_seconds;
-                        self.preview_for = None;
-                        ui.ctx().request_repaint();
+                    if ui.add_enabled(info.video_codec.is_some(), egui::Button::new(
+                        if self.preview_playing { "⏸ Pause" } else { "▶ Preview" }
+                    )).clicked() {
+                        if !self.preview_playing && self.preview_seconds >= end {
+                            self.preview_seconds = start;
+                            self.preview_requested_seconds = start;
+                        }
+                        self.preview_playing = !self.preview_playing;
+                        self.preview_last_tick = Instant::now();
                     }
+                    if ui.add_enabled(info.video_codec.is_some(), egui::Button::new("◀ Frame")).clicked() {
+                        self.preview_seconds = (self.preview_seconds - frame_step).max(0.0);
+                        seek_changed = true;
+                    }
+                    if ui.add_enabled(info.video_codec.is_some(), egui::Button::new("Frame ▶")).clicked() {
+                        self.preview_seconds = (self.preview_seconds + frame_step).min(duration);
+                        seek_changed = true;
+                    }
+                    ui.label(format!("{:.2}s / {:.2}s", self.preview_seconds, duration));
                 });
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Mark In").clicked() {
+                        self.settings.start_seconds = self.preview_seconds;
+                        if self.settings.end_seconds > 0.0
+                            && self.settings.end_seconds <= self.settings.start_seconds {
+                            self.settings.end_seconds = 0.0;
+                        }
+                        self.mark_settings_changed();
+                    }
+                    if ui.button("Mark Out").clicked() {
+                        if self.preview_seconds > self.settings.start_seconds {
+                            self.settings.end_seconds = self.preview_seconds;
+                            self.mark_settings_changed();
+                        } else {
+                            self.notice = "Out point must be after the In point".into();
+                        }
+                    }
+                    if ui.button("Clear In/Out").clicked() {
+                        self.settings.start_seconds = 0.0;
+                        self.settings.end_seconds = 0.0;
+                        self.mark_settings_changed();
+                    }
+                    ui.small(format!("Selection: {:.2}–{:.2}s", start, end));
+                });
+                if seek_changed {
+                    self.preview_requested_seconds = self.preview_seconds;
+                    self.preview_playing = false;
+                }
+                if self.preview_playing { ui.ctx().request_repaint_after(Duration::from_millis(50)); }
             }
             ui.collapsing("Detailed media streams", |ui| {
                 for (kind, tracks) in [
@@ -464,7 +631,7 @@ impl EncoderApp {
                 }
             });
         }
-        ui.small("Still-frame seeking only. Playback, waveforms and timeline editing remain unported.");
+        ui.small("Playback samples silent video frames (up to 4 FPS). Synchronized audio playback, wave editing and multi-cut EDL remain unported.");
     }
 
     fn options_ui(&mut self, ui: &mut egui::Ui) {
@@ -813,6 +980,14 @@ impl EncoderApp {
     }
 }
 
+/// Establish an always valid playback/selection region even with legacy settings.
+fn preview_bounds(duration: f64, start: f64, end: f64) -> (f64, f64) {
+    if !duration.is_finite() || duration <= 0.0 { return (0.0, 0.0); }
+    let start = start.clamp(0.0, duration);
+    let end = if end > start { end.min(duration) } else { duration };
+    if end <= start { (0.0, duration) } else { (start, end) }
+}
+
 impl eframe::App for EncoderApp {
     // eframe 0.36 uses `App::ui` for the native root viewport.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -823,6 +998,7 @@ impl eframe::App for EncoderApp {
         ui.ctx().set_visuals(if self.settings.dark_theme { egui::Visuals::dark() }
             else { egui::Visuals::light() });
 
+        self.tick_playback();
         // Top/center/footer are flexibly sized. The main queue and settings
         // scroll independently in a wide window and stack on narrow windows.
         self.header_ui(ui);
@@ -830,9 +1006,14 @@ impl eframe::App for EncoderApp {
         let height = ui.available_height();
         if width >= 940.0 {
             ui.columns(2, |columns| {
-                self.files_ui(&mut columns[0], (height - 445.0).clamp(140.0, 320.0));
-                self.ensure_preview();
-                self.preview_ui(&mut columns[0]);
+                egui::ScrollArea::vertical().id_salt("queue-and-timeline-scroll")
+                    .auto_shrink([false, false])
+                    .max_height((height - 125.0).max(220.0))
+                    .show(&mut columns[0], |ui| {
+                        self.files_ui(ui, (height - 510.0).clamp(115.0, 240.0));
+                        self.ensure_preview();
+                        self.preview_ui(ui);
+                    });
                 egui::ScrollArea::vertical().id_salt("setting-scroll")
                     .auto_shrink([false, false])
                     .max_height((height - 125.0).max(220.0))
@@ -861,7 +1042,7 @@ impl eframe::App for EncoderApp {
         self.save_when_idle(ui.ctx());
         if self.current.is_some()
             || self.jobs.iter().any(|j| matches!(j.status, JobState::Analyzing))
-            || (self.preview_for.is_some() && self.preview_texture.is_none() && self.preview_error.is_none())
+            || self.preview_loading || self.preview_playing
         {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
         }
@@ -932,6 +1113,14 @@ mod tests {
             app.options_ui(ui);
             app.footer_ui(ui);
         });
+    }
+
+    #[test]
+    fn preview_ranges_handle_invalid_legacy_options() {
+        assert_eq!(preview_bounds(10.0, 2.0, 7.0), (2.0, 7.0));
+        assert_eq!(preview_bounds(10.0, 5.0, 0.0), (5.0, 10.0));
+        assert_eq!(preview_bounds(10.0, 11.0, 0.0), (0.0, 10.0));
+        assert_eq!(preview_bounds(0.0, 2.0, 7.0), (0.0, 0.0));
     }
 
     #[test]

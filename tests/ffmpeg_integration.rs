@@ -94,3 +94,21 @@ fn conversion_preview_audio_and_remux_finish() {
     }
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn media_waveform_and_frame_rate_probe_work() {
+    if !ffmpeg_available() { eprintln!("Skipping media preview: FFmpeg is not installed"); return; }
+    let dir = std::env::temp_dir().join(format!("rust-encoder-timeline-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let input = fixture(&dir);
+    let result = rust_encoder::media::probe_file(Path::new("ffprobe"), &input).unwrap();
+    assert_eq!(result.video_frame_rate, Some(10.0));
+    assert!(result.audio_tracks.len() >= 1);
+    let waveform = rust_encoder::media::waveform_file(Path::new("ffmpeg"), &input).unwrap();
+    assert_eq!((waveform.width, waveform.height), (900, 120));
+    assert_eq!(waveform.rgba.len(), 900 * 120 * 4);
+    let still = rust_encoder::media::thumbnail_file_at(Path::new("ffmpeg"), &input, 0.5).unwrap();
+    assert!(still.width > 0 && still.height > 0);
+    fs::remove_dir_all(dir).unwrap();
+}

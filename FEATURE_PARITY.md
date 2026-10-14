@@ -11,7 +11,7 @@ This matrix is an **acceptance-tracking document**. Existing controls are not pr
 | Video filters | Resize, crop, flip, rotate, output FPS, YADIF deinterlacing, HQDN3D denoising, sharpen, brightness/contrast/saturation/gamma | Frame interpolation, VFR/CFR management, LUT/advanced color grading, overlays and watermark filters |
 | Image processing | Single PNG/JPEG frame extraction, seek position preview | Whole image-sequence workflows, RAW conversion, EXIF/meta, image batch editor |
 | Detection and analysis | Frame MD5, black/freeze/silence detection, EBU R128 measurement, metadata inspection | Custom detection thresholds, offline detection, detailed loudness graph, VMAF, richer analysis reports |
-| Native UI | File queue, themes, metadata/preview, filters, persisted settings/profiles | Real-time player, timeline/waveform, docking, richer per-job editors, keyboard/accessibility |
+| Native UI | File queue, themes, metadata/preview, basic interactive trim timeline, frame-step and silent sampled playback, first-audio waveform, filters, persisted settings/profiles | Synchronized real-time A/V playback, multitrack waveform editor, multi-cut EDL, docking, richer per-job editors, keyboard/accessibility |
 | Automation | Batch queue, cancel/retry, JSON profiles | Watch folders, command jobs, network upload, job recovery, schedule, scripting |
 | AI / utility tools | Not implemented | Upscaling, background removal, transcript/translation, yt-dlp, specialist utilities |
 | Packaging | CI portable ZIPs, no JVM/Electron | Bundled codecs under compliant licenses, installer, signing, notarization, application tests |

@@ -16,7 +16,8 @@ See [FEATURE_PARITY.md](FEATURE_PARITY.md) for a more granular list. A checked e
 - [ ] More codecs, containers, formats, professional profiles, caption workflows
 
 ## Editing, analysis and specialist tools
-- [ ] Native video player, synchronized waveform and timeline, multi-point editing
+- [x] Initial interactive timeline: seeking, In/Out marks, frame stepping and sampled video preview with first-audio waveform
+- [ ] Synchronized native audio/video playback, multitrack waveforms, continuous decoder, multi-point editing
 - [ ] Frame-accurate cuts, EDL/XML/project interchange, retiming and merge pipelines
 - [ ] Advanced detection thresholds, offline detection, VMAF and comparative analysis
 - [ ] Audio track replacement, merging, separation and multi-track control

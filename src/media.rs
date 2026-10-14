@@ -9,6 +9,7 @@ pub struct MediaInfo {
     pub height: Option<u32>,
     pub audio_codec: Option<String>,
     pub audio_channels: Option<u32>,
+    pub video_frame_rate: Option<f64>,
     pub video_tracks: Vec<MediaTrack>,
     pub audio_tracks: Vec<MediaTrack>,
     pub subtitle_tracks: Vec<MediaTrack>,
@@ -53,11 +54,24 @@ struct ProbeFormat { duration: Option<String> }
 struct ProbeStream {
     codec_type: Option<String>, codec_name: Option<String>,
     width: Option<u32>, height: Option<u32>, channels: Option<u32>, duration: Option<String>,
+    avg_frame_rate: Option<String>,
     tags: Option<ProbeTags>,
 }
 
 #[derive(Deserialize)]
 struct ProbeTags { language: Option<String>, title: Option<String> }
+
+/// Parse the rational frame rate reported by ffprobe (e.g. 30000/1001).
+fn parse_frame_rate(value: &str) -> Option<f64> {
+    let rate = if let Some((num, den)) = value.split_once('/') {
+        let numerator = num.parse::<f64>().ok()?;
+        let denominator = den.parse::<f64>().ok()?;
+        numerator / denominator
+    } else {
+        value.parse::<f64>().ok()?
+    };
+    (rate.is_finite() && (1.0..=240.0).contains(&rate)).then_some(rate)
+}
 
 pub fn probe_file(binary: &Path, path: &Path) -> Result<MediaInfo, String> {
     if !path.is_file() { return Err("Input file does not exist".into()); }
@@ -90,6 +104,7 @@ fn parse_probe(data: &[u8]) -> Result<MediaInfo, String> {
             Some("video") if info.video_codec.is_none() => {
                 info.video_codec = stream.codec_name;
                 info.width = stream.width; info.height = stream.height;
+                info.video_frame_rate = stream.avg_frame_rate.as_deref().and_then(parse_frame_rate);
                 if info.duration_sec.is_none() {
                     info.duration_sec = stream.duration.and_then(|s| s.parse::<f64>().ok());
                 }
@@ -146,6 +161,35 @@ pub fn thumbnail_file_at(ffmpeg: &Path, path: &Path, seek_seconds: f64) -> Resul
     Ok(Thumbnail { width: width as usize, height: height as usize, rgba: img.into_raw() })
 }
 
+/// Render a compact all-audio waveform in the FFmpeg worker, never on the UI thread.
+/// FFmpeg's showwavespic emits one bounded 900x120 PNG rather than raw PCM.
+pub fn waveform_file(ffmpeg: &Path, path: &Path) -> Result<Thumbnail, String> {
+    if !path.is_file() { return Err("Input file not found".into()); }
+    let output = Command::new(ffmpeg)
+        .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-i"])
+        .arg(path)
+        .args(["-filter_complex", "[0:a:0]showwavespic=s=900x120:colors=0x54b5e5",
+            "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "pipe:1"])
+        .output()
+        .map_err(|e| format!("Could not start waveform generator: {e}"))?;
+    if !output.status.success() {
+        return Err(format!("Waveform unavailable: {}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    let img = image::load_from_memory_with_format(&output.stdout, image::ImageFormat::Png)
+        .map_err(|e| format!("Cannot decode waveform: {e}"))?.to_rgba8();
+    let (width, height) = img.dimensions();
+    if width != 900 || height != 120 { return Err("Unexpected waveform dimensions".into()); }
+    Ok(Thumbnail { width: width as usize, height: height as usize, rgba: img.into_raw() })
+}
+
+pub fn waveform_async(id: u64, ffmpeg: PathBuf, path: PathBuf,
+    sender: crossbeam_channel::Sender<crate::encode::Event>) {
+    std::thread::spawn(move || {
+        let result = waveform_file(&ffmpeg, &path);
+        let _ = sender.send(crate::encode::Event::WaveformReady { id, result });
+    });
+}
+
 pub fn thumbnail_async(id: u64, seek_ms: u64, ffmpeg: PathBuf, path: PathBuf, sender: crossbeam_channel::Sender<crate::encode::Event>) {
     std::thread::spawn(move || {
         let result = thumbnail_file_at(&ffmpeg, &path, seek_ms as f64 / 1000.0);
@@ -165,6 +209,14 @@ mod tests {
         assert_eq!(info.audio_codec.as_deref(), Some("aac"));
         assert_eq!(info.video_tracks.len(), 1);
         assert_eq!(info.audio_tracks.len(), 1);
+    }
+    #[test]
+    fn frame_rate_parser_guards_zero_and_invalid_rates() {
+        assert_eq!(parse_frame_rate("30000/1001").unwrap().round(), 30.0);
+        assert_eq!(parse_frame_rate("25"), Some(25.0));
+        for rate in ["0/0", "1/0", "400/1", "NaN", "", "0"] {
+            assert_eq!(parse_frame_rate(rate), None);
+        }
     }
     #[test]
     fn missing_duration_is_valid() {

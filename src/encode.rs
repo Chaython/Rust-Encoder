@@ -11,6 +11,7 @@ use std::{
 pub enum Event {
     Probed { id: u64, result: Result<MediaInfo, String> },
     PreviewReady { id: u64, seek_ms: u64, result: Result<crate::media::Thumbnail, String> },
+    WaveformReady { id: u64, result: Result<crate::media::Thumbnail, String> },
     Started { id: u64, output: PathBuf },
     Progress { id: u64, elapsed_sec: f64, speed: String },
     Completed { id: u64, output: PathBuf },
@@ -111,6 +112,7 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
         .iter().map(|v| OsString::from(*v)).collect();
     macro_rules! arg { ($value:expr) => { args.push(OsString::from(($value).to_string())) }; }
     arg!("-i"); args.push(input.as_os_str().to_owned());
+    // Always pass FFmpeg options as arguments, never through a command shell.
     if o.start_seconds > 0.0 {
         arg!("-ss"); arg!(&format!("{:.3}", o.start_seconds));
     }
@@ -244,9 +246,9 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
                 else if matches!(preset, Preset::ProRes | Preset::Dnxhr) { arg!("-c:a"); arg!("pcm_s16le"); }
                 else { arg!("-c:a"); arg!("aac"); arg!("-b:a"); arg!(&format!("{}k", o.audio_bitrate_kbps)); }
                 let filters = audio_filters(o);
-            if !filters.is_empty() { arg!("-af"); arg!(&filters.join(",")); }
-            if o.audio_channels != 0 { arg!("-ac"); arg!(&o.audio_channels.to_string()); }
-            if o.audio_sample_rate != 0 { arg!("-ar"); arg!(&o.audio_sample_rate.to_string()); }
+                if !filters.is_empty() { arg!("-af"); arg!(&filters.join(",")); }
+                if o.audio_channels != 0 { arg!("-ac"); arg!(&o.audio_channels.to_string()); }
+                if o.audio_sample_rate != 0 { arg!("-ar"); arg!(&o.audio_sample_rate.to_string()); }
             }
             if matches!(preset, Preset::H264 | Preset::H265) { arg!("-movflags"); arg!("+faststart"); }
         }

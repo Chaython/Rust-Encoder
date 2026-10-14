@@ -52,3 +52,10 @@ sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libwayland-dev libxcb-shap
 ## License
 
 Rust Encoder source is GPL-3.0-or-later; see [LICENSE](LICENSE). It is not affiliated with any other media encoder GUI. FFmpeg and optional external utilities have their own licenses.
+
+## Timeline and media inspection
+
+- Click or drag the timeline to seek a source file. Step forward/back by the probed frame duration; playback previews up to 4 silent still frames per second, decoded asynchronously via FFmpeg.
+- Mark In, Mark Out or clear the selection directly on the timeline. Marks update shared trim settings for all queued jobs; running jobs do not change. Stream-copy cuts remain keyframe-inexact.
+- An FFmpeg `showwavespic` waveform of the first audio stream appears under the preview. Waveform generation runs off the GUI thread and can take time for long media.
+- This is **not** synchronized audio/video playback, a multitrack waveform editor or frame-accurate editing. These remain future milestones.

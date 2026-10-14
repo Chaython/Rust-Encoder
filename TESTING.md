@@ -30,3 +30,10 @@ No realtime video player, synchronized waveform/editor timeline, bulk image sequ
 - Argument tests assert exactly one `-vf`/`-af` chain for combined effects, reject non-finite controls, and reject video/audio processing on stream-copy presets.
 - The Linux generated-media integration test now exercises YADIF, HQDN3D, unsharp and `eq` filters with H.264, including mono/48 kHz conversion and audio gain; FLAC additionally verifies resampling and gain.
 - These are simple FFmpeg processing modes; color-managed HDR, LUTs, per-channel mixing and two-pass broadcast loudness are not implemented.
+
+## Sampled preview and trim timeline
+
+- Media integration tests create mixed video/audio FFmpeg fixtures, probe the source frame rate, extract a seeked frame and generate/parse the 900×120 waveform PNG.
+- GUI tests check trimmed bounds (including invalid older settings) and preview panels without a window.
+- The preview decodes **silent sampled frames** rather than replaying synchronized audio. Multiple rapid scrub requests are serialized per selection; stale results are discarded.
+- Manual GUI checks remain essential for scrubbing, repeated switching between files, input focus, small-window layout, memory usage and longer videos.
