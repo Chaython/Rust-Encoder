@@ -1291,13 +1291,15 @@ impl EncoderApp {
                 if self.settings.preset.video() {
                     if self.settings.hardware_encoder == HardwareEncoder::Nvenc {
                         ui.label("NVENC preset (Fast P1 / Balanced P4 / Quality P7)");
+                    } else if self.settings.hardware_encoder == HardwareEncoder::Amf {
+                        ui.label("AMD AMF quality preset (Speed / Balanced / Quality)");
                     } else if self.settings.hardware_encoder == HardwareEncoder::Software {
                         ui.label("Software compression speed");
                     } else {
                         ui.label("Compression speed (not mapped for this hardware encoder)");
                     }
-                    ui.add_enabled_ui(self.settings.hardware_encoder == HardwareEncoder::Software
-                        || self.settings.hardware_encoder == HardwareEncoder::Nvenc, |ui| {
+                    ui.add_enabled_ui(matches!(self.settings.hardware_encoder,
+                        HardwareEncoder::Software | HardwareEncoder::Nvenc | HardwareEncoder::Amf), |ui| {
                     egui::ComboBox::from_id_salt("encoder-speed")
                         .selected_text(match self.settings.encoder_speed {
                             0 => "Fastest", 2 => "Quality / smaller files", _ => "Balanced"
