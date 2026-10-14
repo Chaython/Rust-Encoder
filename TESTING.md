@@ -1,24 +1,25 @@
-# Validation and regression notes
+# Rust Encoder test plan
 
-This project is a new Rust application with an evolving GUI and feature set.
+## Automated coverage
 
-## Source-level / media-command checks
+- Unit tests cover settings migration/JSON, FFprobe parsing, preset mapping, argument validation, progress interpretation, collision avoidance and layout root rendering.
+- FFmpeg integration tests generate a 1-second sample A/V clip using lavfi. They exercise H.264 with crop/rotation/fps; MKV/MP4 rewrap; video-only extraction; WAV/FLAC/MP3/AAC; still PNG/JPEG extraction; frame MD5. FFmpeg is installed explicitly in Linux CI. Tests skip gracefully if FFmpeg is absent on a local machine.
+- GitHub Actions builds Windows/Linux/macOS, tests all targets, runs clippy, packages portable ZIPs and executes the compiled binary with `--version`.
+- Synthetic tests do **not** establish codec, platform, professional video or GUI feature parity.
 
-- Initial encoding command patterns were exercised with synthetic FFmpeg media for 11 presets (H.264/H.265/AV1/VP9/ProRes/DNxHR/MKV remux/WAV/FLAC/MP3/AAC) on the source-authoring environment.
-- FFmpeg still-frame PNG extraction for a short test MP4 was also exercised.
-- The authoring environment did not provide a Rust toolchain; **no successful Rust build or real GUI launch is claimed** by these checks.
-- GitHub Actions should build and test `main` on Windows, Linux and macOS; any failures must be fixed before distributing binaries.
+## Required manual desktop acceptance
 
-## GUI acceptance tests
+1. Run at 740×550, 1040×780 and 1440×900, with Windows scaling 100/150/200%, both themes; confirm independent scroll and accessible queue buttons.
+2. Drag/drop Unicode or special-character paths; test multiple video, audio-only and damaged files; select files while probes or previews are running.
+3. Seek still-frame preview repeatedly, select another file during processing, verify obsolete preview events are discarded.
+4. Change a preset while jobs are queued vs running; load/save a profile; verify persisted controls on restart.
+5. Exercise start/pause-after-current/cancel/retry on long media; close the GUI while encoding; inspect child FFmpeg processes and temp output cleanup.
+6. Test multi-video, multi-audio, subtitle tracks, language tags, existing output path collision, metadata, destination permissions, disk-full and race conditions.
+7. Test each hardware backend with supported GPU/driver and actual device, including missing/unsupported encoder error handling.
+8. Compare transcodes (duration, stream mapping, frames, audio loudness, color fidelity) against input with FFprobe, perceptual checks and frame hashes.
+9. Verify remote/UNC paths, symlinks, long paths, Unicode and non-ASCII filenames on native Windows/macOS/Linux.
+10. Verify portable archives on machines **without** developer tools; test executable and external FFmpeg discovery.
 
-1. Check 760×600, 1040×780 and 1440×900 windows, including high DPI, for accessible controls and scrolling.
-2. Test drag/drop and file picker with audio-only/video, corrupt files, Unicode paths and short clips.
-3. Change presets after adding files; verify only queued files change and active encoding stays unchanged.
-4. Start/pause/cancel/retry/remove queue items; ensure no zombie media subprocesses or overwritten files.
-5. Check selected-file previews, error messages, missing FFmpeg/FFprobe guidance and theme/settings persistence.
-6. Validate codecs, mixed streams, subtitles/metadata, quality and A/V sync against reference media; smoke commands are not enough.
-7. Verify portable archives on fresh Windows/macOS/Linux machines with FFmpeg placed beside the binary or in PATH.
+## Known limitations
 
-## Known missing GUI features
-
-Still preview exists; real-time video playback, scrubbable timeline, waveforms, advanced per-stream settings and most professional editing controls are **not implemented**.
+No realtime video player, synchronized waveform/editor timeline, bulk image sequences, complete HDR/color/subtitle workflows, AI/media utility integrations, or full original feature equivalence. A one-pass `loudnorm` filter does not guarantee a measured integrated loudness target. Hardware encoders require compatible FFmpeg binaries and may not support software encoder settings.

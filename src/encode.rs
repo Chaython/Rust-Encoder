@@ -1,4 +1,4 @@
-use crate::{media::MediaInfo, model::{EncodeOptions, Preset}};
+use crate::{media::MediaInfo, model::{EncodeOptions, HardwareEncoder, Preset}};
 use crossbeam_channel::Sender;
 use std::{
     collections::VecDeque, ffi::OsString, fs::{self, File, OpenOptions}, io::{BufRead, BufReader, Write},
@@ -10,7 +10,7 @@ use std::{
 #[derive(Debug)]
 pub enum Event {
     Probed { id: u64, result: Result<MediaInfo, String> },
-    PreviewReady { id: u64, result: Result<crate::media::Thumbnail, String> },
+    PreviewReady { id: u64, seek_ms: u64, result: Result<crate::media::Thumbnail, String> },
     Started { id: u64, output: PathBuf },
     Progress { id: u64, elapsed_sec: f64, speed: String },
     Completed { id: u64, output: PathBuf },
@@ -32,6 +32,30 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     }
     if options.end_seconds != 0.0 && options.end_seconds <= options.start_seconds {
         return Err("Trim end must be greater than start (or 0 to disable)".into());
+    }
+    if o.frame_rate > 240 {
+        return Err("Frame rate must be 0 (original) or 1–240".into());
+    }
+    if o.crop_width != 0 || o.crop_height != 0 {
+        if o.crop_width < 2 || o.crop_height < 2 || o.crop_width > 16384 || o.crop_height > 16384 {
+            return Err("Crop width and height must both be 2–16384".into());
+        }
+    }
+    if !matches!(o.rotate_degrees, 0 | 90 | 180 | 270) {
+        return Err("Rotation must be 0, 90, 180 or 270 degrees".into());
+    }
+    if o.audio_stream < -2 || o.subtitle_stream < -1 {
+        return Err("Invalid audio or subtitle stream index".into());
+    }
+    if o.hardware_encoder != HardwareEncoder::Software
+        && o.hardware_encoder.codec(o.preset).is_none() {
+        return Err("This hardware encoder supports H.264/H.265 only. Switch to CPU/software for other functions".into());
+    }
+    if !o.preset.video() && (
+        o.frame_rate != 0 || o.crop_width != 0 || o.crop_height != 0 ||
+        o.rotate_degrees != 0 || o.flip_horizontal || o.flip_vertical || o.target_width != 0
+    ) {
+        return Err("Video filters require a video-encoding function. Disable filters for copying, extraction or audio functions".into());
     }
     Ok(())
 }
@@ -63,42 +87,108 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
     }
     match o.preset {
         Preset::RemuxMkv => {
+            // Preserve all streams (including subtitles, chapters, attachments and metadata).
             for a in ["-map", "0", "-c", "copy", "-map_metadata", "0", "-map_chapters", "0"] { arg!(a); }
         }
+        Preset::RemuxMp4 => {
+            // MP4 cannot contain every data/subtitle codec; copy A/V streams only.
+            for a in ["-map", "0:v?", "-map", "0:a?", "-c", "copy", "-map_metadata", "0", "-map_chapters", "0", "-movflags", "+faststart"] { arg!(a); }
+        }
+        Preset::VideoOnly => {
+            arg!("-map"); arg!(&format!("0:v:{}", o.video_stream));
+            for a in ["-c:v", "copy", "-an", "-sn", "-dn"] { arg!(a); }
+        }
+        Preset::ExtractSrt | Preset::ExtractAss => {
+            let stream = o.subtitle_stream.max(0);
+            arg!("-map"); arg!(&format!("0:s:{stream}"));
+            arg!("-c:s"); arg!(if o.preset == Preset::ExtractSrt { "srt" } else { "ass" });
+            arg!("-f"); arg!(if o.preset == Preset::ExtractSrt { "srt" } else { "ass" });
+        }
+        Preset::PngStill | Preset::JpegStill => {
+            arg!("-map"); arg!(&format!("0:v:{}", o.video_stream));
+            arg!("-frames:v"); arg!("1");
+            arg!("-an"); arg!("-sn");
+            arg!("-c:v"); arg!(if o.preset == Preset::PngStill { "png" } else { "mjpeg" });
+            if o.preset == Preset::JpegStill { arg!("-q:v"); arg!("2"); }
+        }
+        Preset::FrameMd5 => {
+            arg!("-map"); arg!(&format!("0:v:{}", o.video_stream));
+            arg!("-f"); arg!("framemd5");
+        }
         preset if preset.audio_only() => {
-            for a in ["-map", "0:a:0", "-vn", "-sn", "-dn"] { arg!(a); }
+            if o.audio_stream == -2 { return Err("An audio stream is required for audio extraction".into()); }
+            arg!("-map"); arg!(&format!("0:a:{}", o.audio_stream.max(0)));
+            for a in ["-vn", "-sn", "-dn"] { arg!(a); }
             match preset {
                 Preset::Wav => { arg!("-c:a"); arg!("pcm_s24le"); }
                 Preset::Flac => { arg!("-c:a"); arg!("flac"); }
                 Preset::Mp3 => { arg!("-c:a"); arg!("libmp3lame"); }
                 Preset::Aac => { arg!("-c:a"); arg!("aac"); }
+                Preset::Opus => { arg!("-c:a"); arg!("libopus"); }
                 _ => unreachable!(),
             }
-            if matches!(preset, Preset::Mp3 | Preset::Aac) {
+            if matches!(preset, Preset::Mp3 | Preset::Aac | Preset::Opus) {
                 arg!("-b:a"); arg!(&format!("{}k", o.audio_bitrate_kbps));
             }
             if o.normalize_audio { arg!("-af"); arg!("loudnorm=I=-16:TP=-1.5:LRA=11"); }
         }
         preset => {
-            // First video stream, all audio streams; subtitles are not silently discarded by
-            // attempting unsupported stream copies. Subtitle conversion is a future feature.
-            for a in ["-map", "0:v:0", "-map", "0:a?"] { arg!(a); }
+            arg!("-map"); arg!(&format!("0:v:{}", o.video_stream));
+            match o.audio_stream {
+                -2 => {},
+                -1 => { arg!("-map"); arg!("0:a?"); },
+                index => { arg!("-map"); arg!(&format!("0:a:{index}")); }
+            }
+            if o.subtitle_stream >= 0 {
+                arg!("-map"); arg!(&format!("0:s:{}", o.subtitle_stream));
+                arg!("-c:s"); arg!(if preset == Preset::Vp9 { "webvtt" }
+                    else if matches!(preset, Preset::H264 | Preset::H265 | Preset::ProRes | Preset::Dnxhr) { "mov_text" }
+                    else { "srt" });
+            }
             match preset {
-                Preset::H264 => { arg!("-c:v"); arg!("libx264"); arg!("-crf"); arg!(&o.quality.to_string()); arg!("-preset"); arg!("medium"); arg!("-pix_fmt"); arg!("yuv420p"); }
-                Preset::H265 => { arg!("-c:v"); arg!("libx265"); arg!("-crf"); arg!(&o.quality.to_string()); arg!("-preset"); arg!("medium"); arg!("-pix_fmt"); arg!("yuv420p"); }
+                Preset::H264 | Preset::H265 if o.hardware_encoder != HardwareEncoder::Software => {
+                    let codec = o.hardware_encoder.codec(preset).ok_or("Unsupported hardware codec")?;
+                    arg!("-c:v"); arg!(codec);
+                    match o.hardware_encoder {
+                        HardwareEncoder::Nvenc => { arg!("-rc"); arg!("vbr"); arg!("-cq"); arg!(&o.quality.to_string()); arg!("-b:v"); arg!("0"); }
+                        HardwareEncoder::Qsv => { arg!("-global_quality"); arg!(&o.quality.to_string()); }
+                        HardwareEncoder::Amf => { arg!("-rc"); arg!("cqp"); arg!("-qp_i"); arg!(&o.quality.to_string()); arg!("-qp_p"); arg!(&o.quality.to_string()); }
+                        HardwareEncoder::VideoToolbox => { arg!("-b:v"); arg!("6M"); }
+                        HardwareEncoder::Software => unreachable!(),
+                    }
+                }
+                Preset::H264 => { arg!("-c:v"); arg!("libx264"); arg!("-crf"); arg!(&o.quality.to_string()); arg!("-preset"); arg!("medium"); }
+                Preset::H265 => { arg!("-c:v"); arg!("libx265"); arg!("-crf"); arg!(&o.quality.to_string()); arg!("-preset"); arg!("medium"); }
                 Preset::Av1 => { arg!("-c:v"); arg!("libsvtav1"); arg!("-crf"); arg!(&o.quality.to_string()); arg!("-preset"); arg!("6"); }
                 Preset::Vp9 => { arg!("-c:v"); arg!("libvpx-vp9"); arg!("-b:v"); arg!("0"); arg!("-crf"); arg!(&o.quality.to_string()); arg!("-deadline"); arg!("good"); }
                 Preset::ProRes => { arg!("-c:v"); arg!("prores_ks"); arg!("-profile:v"); arg!("3"); arg!("-pix_fmt"); arg!("yuv422p10le"); }
                 Preset::Dnxhr => { arg!("-c:v"); arg!("dnxhd"); arg!("-profile:v"); arg!("dnxhr_hq"); arg!("-pix_fmt"); arg!("yuv422p"); }
                 _ => unreachable!(),
             }
-            if o.target_width > 0 {
-                arg!("-vf"); arg!(&format!("scale={}:-2:flags=lanczos", o.target_width));
+            if matches!(preset, Preset::H264 | Preset::H265) {
+                arg!("-pix_fmt"); arg!("yuv420p");
             }
-            if preset == Preset::Vp9 { arg!("-c:a"); arg!("libopus"); }
-            else if matches!(preset, Preset::ProRes | Preset::Dnxhr) { arg!("-c:a"); arg!("pcm_s16le"); }
-            else { arg!("-c:a"); arg!("aac"); arg!("-b:a"); arg!(&format!("{}k", o.audio_bitrate_kbps)); }
-            if o.normalize_audio { arg!("-af"); arg!("loudnorm=I=-16:TP=-1.5:LRA=11"); }
+            let mut video_filters: Vec<String> = Vec::new();
+            if o.crop_width > 0 {
+                video_filters.push(format!("crop={}:{}:{}:{}", o.crop_width, o.crop_height, o.crop_x, o.crop_y));
+            }
+            match o.rotate_degrees {
+                90 => video_filters.push("transpose=clock".into()),
+                180 => video_filters.push("hflip,vflip".into()),
+                270 => video_filters.push("transpose=cclock".into()),
+                _ => {}
+            }
+            if o.flip_horizontal { video_filters.push("hflip".into()); }
+            if o.flip_vertical { video_filters.push("vflip".into()); }
+            if o.target_width > 0 { video_filters.push(format!("scale={}:-2:flags=lanczos", o.target_width)); }
+            if o.frame_rate > 0 { video_filters.push(format!("fps={}", o.frame_rate)); }
+            if !video_filters.is_empty() { arg!("-vf"); arg!(&video_filters.join(",")); }
+            if o.audio_stream != -2 {
+                if preset == Preset::Vp9 { arg!("-c:a"); arg!("libopus"); }
+                else if matches!(preset, Preset::ProRes | Preset::Dnxhr) { arg!("-c:a"); arg!("pcm_s16le"); }
+                else { arg!("-c:a"); arg!("aac"); arg!("-b:a"); arg!(&format!("{}k", o.audio_bitrate_kbps)); }
+                if o.normalize_audio { arg!("-af"); arg!("loudnorm=I=-16:TP=-1.5:LRA=11"); }
+            }
             if matches!(preset, Preset::H264 | Preset::H265) { arg!("-movflags"); arg!("+faststart"); }
         }
     }
@@ -110,8 +200,12 @@ fn tag(preset: Preset) -> &'static str {
     match preset {
         Preset::H264 => "h264", Preset::H265 => "h265", Preset::Av1 => "av1",
         Preset::Vp9 => "vp9", Preset::ProRes => "prores", Preset::Dnxhr => "dnxhr",
-        Preset::RemuxMkv => "rewrap", Preset::Wav => "wav", Preset::Flac => "flac",
-        Preset::Mp3 => "mp3", Preset::Aac => "aac",
+        Preset::RemuxMkv => "rewrap", Preset::RemuxMp4 => "rewrap_mp4",
+        Preset::VideoOnly => "video", Preset::PngStill => "still",
+        Preset::JpegStill => "still", Preset::ExtractSrt => "subtitles",
+        Preset::ExtractAss => "subtitles", Preset::FrameMd5 => "checksums",
+        Preset::Wav => "wav", Preset::Flac => "flac",
+        Preset::Mp3 => "mp3", Preset::Aac => "aac", Preset::Opus => "opus",
     }
 }
 
@@ -278,6 +372,10 @@ mod tests {
     fn options(preset: Preset) -> EncodeOptions {
         EncodeOptions { preset, quality: 23, target_width: 0, audio_bitrate_kbps: 192,
             start_seconds: 0.0, end_seconds: 0.0, normalize_audio: false,
+            hardware_encoder: HardwareEncoder::Software,
+            frame_rate: 0, crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
+            rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
+            audio_stream: -1, subtitle_stream: -1, video_stream: 0,
             output_dir: None, ffmpeg: PathBuf::from("ffmpeg") }
     }
     #[test]
@@ -316,4 +414,39 @@ mod tests {
         assert!(!a.iter().any(|v| v.to_string_lossy() == "sh"));
         std::fs::remove_file(tmp).unwrap();
     }
+    #[test]
+    fn all_presets_create_non_shell_commands() {
+        let input = std::env::temp_dir().join(format!("rust-encoder-fixture-{}.mkv", std::process::id()));
+        std::fs::write(&input, b"test").unwrap();
+        for preset in Preset::ALL {
+            let o = options(preset);
+            let args = build_args(&input, &input.with_extension(preset.extension()), &o).unwrap();
+            assert!(args.iter().any(|a| a.as_os_str() == input.as_os_str()), "{preset:?}");
+            assert!(!args.is_empty(), "{preset:?}");
+        }
+        std::fs::remove_file(input).unwrap();
+    }
+    #[test]
+    fn filter_chain_tracks_selected_streams() {
+        let input = std::env::temp_dir().join(format!("rust-encoder-filter-{}.mkv", std::process::id()));
+        std::fs::write(&input, b"test").unwrap();
+        let mut o = options(Preset::H264);
+        o.crop_width = 640; o.crop_height = 360; o.rotate_degrees = 90;
+        o.frame_rate = 30; o.audio_stream = -2; o.subtitle_stream = 0;
+        o.video_stream = 1;
+        let args = build_args(&input, &input.with_extension("mp4"), &o).unwrap();
+        let text = args.iter().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>();
+        assert!(text.contains(&"0:v:1".to_owned()));
+        assert!(text.contains(&"0:s:0".to_owned()));
+        assert!(text.iter().any(|x| x.contains("crop=640:360:0:0,transpose=clock,fps=30")));
+        assert!(!text.iter().any(|x| x == "-c:a"));
+        std::fs::remove_file(input).unwrap();
+    }
+    #[test]
+    fn invalid_hardware_codec_rejected() {
+        let mut o = options(Preset::ProRes);
+        o.hardware_encoder = HardwareEncoder::Nvenc;
+        assert!(validate_options(&o).is_err());
+    }
+
 }

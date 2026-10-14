@@ -3,7 +3,7 @@ use eframe::egui;
 use rust_encoder::{
     encode::{self, Event},
     media::{self, MediaInfo},
-    model::{self, EncodeOptions, Preset, Settings},
+    model::{self, EncodeOptions, HardwareEncoder, Preset, Settings},
 };
 use std::{
     path::PathBuf,
@@ -66,7 +66,10 @@ pub struct EncoderApp {
     receiver: Receiver<Event>,
     next_id: u64,
     selected_job: Option<u64>,
-    preview_for: Option<u64>,
+    preview_for: Option<(u64, u64)>,
+    preview_owner: Option<u64>,
+    preview_seconds: f64,
+    preview_requested_seconds: f64,
     preview_texture: Option<egui::TextureHandle>,
     preview_pixels: Option<media::Thumbnail>,
     preview_error: Option<String>,
@@ -87,6 +90,9 @@ impl EncoderApp {
             next_id: 1,
             selected_job: None,
             preview_for: None,
+            preview_owner: None,
+            preview_seconds: 0.0,
+            preview_requested_seconds: 0.0,
             preview_texture: None,
             preview_pixels: None,
             preview_error: None,
@@ -160,8 +166,8 @@ impl EncoderApp {
                         }
                     }
                 }
-                Event::PreviewReady { id, result } => {
-                    if self.preview_for == Some(id) {
+                Event::PreviewReady { id, seek_ms, result } => {
+                    if self.preview_for == Some((id, seek_ms)) {
                         match result {
                             Ok(preview) => self.preview_pixels = Some(preview),
                             Err(message) => self.preview_error = Some(message),
@@ -253,6 +259,31 @@ impl EncoderApp {
         ui.horizontal_wrapped(|ui| {
             ui.heading("Rust Encoder");
             ui.label("Media encoder");
+            ui.separator();
+            if ui.button("Save profile…").clicked()
+                && let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Rust Encoder profile", &["json"])
+                    .set_file_name("encoder-profile.json").save_file()
+            {
+                match serde_json::to_vec_pretty(&self.settings)
+                    .map_err(|e| e.to_string())
+                    .and_then(|data| std::fs::write(path, data).map_err(|e| e.to_string()))
+                {
+                    Ok(()) => self.notice = "Profile saved.".into(),
+                    Err(e) => self.notice = format!("Unable to save profile: {e}"),
+                }
+            }
+            if ui.button("Load profile…").clicked()
+                && let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Rust Encoder profile", &["json"]).pick_file()
+            {
+                match std::fs::read(path).map_err(|e| e.to_string())
+                    .and_then(|bytes| serde_json::from_slice::<Settings>(&bytes).map_err(|e| e.to_string()))
+                {
+                    Ok(settings) => { self.settings = settings; self.mark_settings_changed(); self.notice = "Profile loaded.".into(); }
+                    Err(e) => self.notice = format!("Unable to load profile: {e}"),
+                }
+            }
             ui.separator();
             if ui.checkbox(&mut self.settings.dark_theme, "Dark theme").changed() {
                 self.mark_settings_changed();
@@ -350,30 +381,36 @@ impl EncoderApp {
     }
 
     fn ensure_preview(&mut self) {
-        if self.preview_for == self.selected_job { return; }
-        self.preview_for = self.selected_job;
+        if self.preview_owner != self.selected_job {
+            self.preview_owner = self.selected_job;
+            self.preview_seconds = 0.0;
+            self.preview_requested_seconds = 0.0;
+            self.preview_for = None;
+        }
+        let Some(id) = self.selected_job else { return; };
+        let seek_ms = (self.preview_requested_seconds.max(0.0) * 1000.0).round() as u64;
+        if self.preview_for == Some((id, seek_ms)) { return; }
+        self.preview_for = Some((id, seek_ms));
         self.preview_texture = None;
         self.preview_pixels = None;
         self.preview_error = None;
-        let Some(job) = self.jobs.iter().find(|j| Some(j.id) == self.selected_job) else { return; };
+        let Some(job) = self.jobs.iter().find(|j| j.id == id) else { return; };
         let Some(info) = &job.media else {
             if matches!(job.status, JobState::Analyzing) {
-                // Probe is asynchronous; retry when its event arrives.
                 self.preview_for = None;
             } else {
-                self.preview_error = Some("No preview: media inspection did not succeed.".to_owned());
+                self.preview_error = Some("No preview: media inspection did not succeed.".into());
             }
             return;
         };
         if info.video_codec.is_none() {
-            self.preview_error = Some("Audio-only media: no video frame to preview.".to_owned());
+            self.preview_error = Some("Audio-only media: no video frame to preview.".into());
             return;
         }
         media::thumbnail_async(
-            job.id,
+            id, seek_ms,
             model::resolve_tool("ffmpeg", &self.settings.ffmpeg_path),
-            job.input.clone(),
-            self.sender.clone(),
+            job.input.clone(), self.sender.clone(),
         );
     }
 
@@ -401,17 +438,39 @@ impl EncoderApp {
         } else {
             ui.small("Select a file to inspect its video frame and metadata.");
         }
-        if let Some(job) = self.jobs.iter().find(|j| Some(j.id) == self.selected_job) {
-            if let Some(info) = &job.media {
-                ui.small(info.summary());
+        if let Some(job) = self.jobs.iter().find(|j| Some(j.id) == self.selected_job)
+            && let Some(info) = &job.media
+        {
+            ui.small(info.summary());
+            if let Some(duration) = info.duration_sec && info.video_codec.is_some() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(egui::Slider::new(&mut self.preview_seconds, 0.0..=duration)
+                        .text("Seek (s)").fixed_decimals(2));
+                    if ui.button("Preview frame").clicked() {
+                        self.preview_requested_seconds = self.preview_seconds;
+                        self.preview_for = None;
+                        ui.ctx().request_repaint();
+                    }
+                });
             }
+            ui.collapsing("Detailed media streams", |ui| {
+                for (kind, tracks) in [
+                    ("Video", &info.video_tracks),
+                    ("Audio", &info.audio_tracks),
+                    ("Subtitles", &info.subtitle_tracks),
+                ] {
+                    ui.small(format!("{kind}: {}", tracks.len()));
+                    for (n, track) in tracks.iter().enumerate() { ui.small(track.description(n)); }
+                }
+            });
         }
-        ui.small("Still-frame preview only. Video playback, waveform and timeline editing are pending.");
+        ui.small("Still-frame seeking only. Playback, waveforms and timeline editing remain unported.");
     }
 
     fn options_ui(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
         ui.heading("Choose function");
+        let previous_preset = self.settings.preset;
         egui::ComboBox::from_id_salt("preset")
             .selected_text(self.settings.preset.label())
             .width(ui.available_width().max(190.0))
@@ -420,7 +479,20 @@ impl EncoderApp {
                     changed |= ui.selectable_value(&mut self.settings.preset, preset, preset.label()).changed();
                 }
             });
-        ui.small("Function changes update files waiting in the queue; an active encode is unaffected.");
+        if previous_preset != self.settings.preset {
+            if !matches!(self.settings.preset, Preset::H264 | Preset::H265) {
+                self.settings.hardware_encoder = HardwareEncoder::Software;
+            }
+            if !self.settings.preset.video() {
+                self.settings.target_width = 0;
+                self.settings.frame_rate = 0;
+                self.settings.crop_width = 0; self.settings.crop_height = 0;
+                self.settings.crop_x = 0; self.settings.crop_y = 0;
+                self.settings.rotate_degrees = 0;
+                self.settings.flip_horizontal = false; self.settings.flip_vertical = false;
+            }
+        }
+        ui.small("Function changes update queued jobs; active and completed jobs are unchanged.");
         ui.add_space(6.0);
 
         egui::CollapsingHeader::new("Image / codec")
@@ -436,7 +508,7 @@ impl EncoderApp {
                     ui.label("Resize width (0 = retain source size)");
                     changed |= ui.add(egui::DragValue::new(&mut self.settings.target_width)
                         .range(0..=16384).speed(2)).changed();
-                } else if self.settings.preset == Preset::RemuxMkv {
+                } else if matches!(self.settings.preset, Preset::RemuxMkv | Preset::RemuxMp4 | Preset::VideoOnly) {
                     ui.small("Lossless stream copy. Video scaling and filters are unavailable.");
                 } else {
                     ui.small("Audio-only output; video streams will be excluded.");
@@ -446,15 +518,135 @@ impl EncoderApp {
         egui::CollapsingHeader::new("Audio settings")
             .default_open(true)
             .show(ui, |ui| {
-                if matches!(self.settings.preset, Preset::H264 | Preset::H265 | Preset::Av1 | Preset::Mp3 | Preset::Aac) {
+                if matches!(self.settings.preset, Preset::H264 | Preset::H265 | Preset::Av1 | Preset::Mp3 | Preset::Aac | Preset::Opus) {
                     ui.label("Audio bitrate (kb/s)");
                     changed |= ui.add(egui::Slider::new(&mut self.settings.audio_bitrate_kbps, 32..=512)).changed();
                 }
-                if self.settings.preset != Preset::RemuxMkv {
+                if self.settings.preset.video() || self.settings.preset.audio_only() {
                     changed |= ui.checkbox(&mut self.settings.normalize_audio, "Normalize loudness (one-pass)").changed();
                 } else {
                     ui.small("Audio is copied without processing.");
                 }
+            });
+
+        egui::CollapsingHeader::new("Video filters / image tools")
+            .default_open(false)
+            .show(ui, |ui| {
+                if self.settings.preset.video() {
+                    ui.label("Output frame rate (0 = source)");
+                    changed |= ui.add(egui::DragValue::new(&mut self.settings.frame_rate)
+                        .range(0..=240)).changed();
+                    ui.label("Crop (width and height 0 = off)");
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Width");
+                        changed |= ui.add(egui::DragValue::new(&mut self.settings.crop_width)
+                            .range(0..=16384).speed(2)).changed();
+                        ui.label("Height");
+                        changed |= ui.add(egui::DragValue::new(&mut self.settings.crop_height)
+                            .range(0..=16384).speed(2)).changed();
+                    });
+                    if self.settings.crop_width > 0 || self.settings.crop_height > 0 {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label("X");
+                            changed |= ui.add(egui::DragValue::new(&mut self.settings.crop_x)
+                                .range(0..=16384)).changed();
+                            ui.label("Y");
+                            changed |= ui.add(egui::DragValue::new(&mut self.settings.crop_y)
+                                .range(0..=16384)).changed();
+                        });
+                    }
+                    ui.label("Rotate");
+                    egui::ComboBox::from_id_salt("rotation")
+                        .selected_text(format!("{}°", self.settings.rotate_degrees))
+                        .show_ui(ui, |ui| {
+                            for degrees in [0, 90, 180, 270] {
+                                changed |= ui.selectable_value(&mut self.settings.rotate_degrees,
+                                    degrees, format!("{degrees}°")).changed();
+                            }
+                        });
+                    changed |= ui.checkbox(&mut self.settings.flip_horizontal, "Flip horizontally").changed();
+                    changed |= ui.checkbox(&mut self.settings.flip_vertical, "Flip vertically").changed();
+                } else {
+                    ui.small("Non-encoding operations preserve frames/streams or export directly; filters are disabled.");
+                    if ui.button("Reset video filters").clicked() {
+                        self.settings.frame_rate = 0; self.settings.crop_width = 0; self.settings.crop_height = 0;
+                        self.settings.crop_x = 0; self.settings.crop_y = 0;
+                        self.settings.rotate_degrees = 0; self.settings.flip_horizontal = false;
+                        self.settings.flip_vertical = false; self.settings.target_width = 0; changed = true;
+                    }
+                }
+            });
+
+        egui::CollapsingHeader::new("Stream mapping / subtitles")
+            .default_open(false)
+            .show(ui, |ui| {
+                let selected_info = self.jobs.iter()
+                    .find(|j| Some(j.id) == self.selected_job).and_then(|j| j.media.as_ref());
+                if self.settings.preset.video() || matches!(self.settings.preset,
+                    Preset::VideoOnly | Preset::FrameMd5 | Preset::PngStill | Preset::JpegStill) {
+                    ui.label("Video track (0 = first)");
+                    changed |= ui.add(egui::DragValue::new(&mut self.settings.video_stream)
+                        .range(0..=32)).changed();
+                }
+                if self.settings.preset.video() || self.settings.preset.audio_only() {
+                    ui.label("Audio track selection");
+                    egui::ComboBox::from_id_salt("audio-stream")
+                        .selected_text(match self.settings.audio_stream {
+                            -2 => "No audio".to_owned(),
+                            -1 => "All audio tracks (first for audio-only)".to_owned(),
+                            n => format!("Audio #{n}"),
+                        })
+                        .show_ui(ui, |ui| {
+                            if self.settings.preset.video() {
+                                changed |= ui.selectable_value(&mut self.settings.audio_stream, -2, "No audio").changed();
+                            }
+                            changed |= ui.selectable_value(&mut self.settings.audio_stream, -1,
+                                "All tracks (first for audio-only)").changed();
+                            let count = selected_info.map(|m| m.audio_tracks.len()).unwrap_or(8).min(32);
+                            for n in 0..count {
+                                let name = selected_info.map(|m| m.audio_tracks[n].description(n))
+                                    .unwrap_or_else(|| format!("Audio #{n}"));
+                                changed |= ui.selectable_value(&mut self.settings.audio_stream, n as i32, name).changed();
+                            }
+                        });
+                }
+                if self.settings.preset.video() || matches!(self.settings.preset,
+                    Preset::ExtractSrt | Preset::ExtractAss) {
+                    ui.label("Subtitle track");
+                    egui::ComboBox::from_id_salt("subtitle-stream")
+                        .selected_text(if self.settings.subtitle_stream == -1 { "None (first for extraction)".into() }
+                            else { format!("Subtitle #{}", self.settings.subtitle_stream) })
+                        .show_ui(ui, |ui| {
+                            changed |= ui.selectable_value(&mut self.settings.subtitle_stream, -1,
+                                "No subtitles (first for extraction)").changed();
+                            let count = selected_info.map(|m| m.subtitle_tracks.len()).unwrap_or(8).min(32);
+                            for n in 0..count {
+                                let name = selected_info.map(|m| m.subtitle_tracks[n].description(n))
+                                    .unwrap_or_else(|| format!("Subtitle #{n}"));
+                                changed |= ui.selectable_value(&mut self.settings.subtitle_stream, n as i32, name).changed();
+                            }
+                        });
+                    ui.small("Subtitle muxing is supported for compatible containers. Subtitle burn-in is not yet available.");
+                }
+                if matches!(self.settings.preset, Preset::RemuxMkv) {
+                    ui.small("MKV rewrap copies every stream, chapter and attachment.");
+                }
+            });
+
+        egui::CollapsingHeader::new("Hardware encoder")
+            .default_open(false)
+            .show(ui, |ui| {
+                if matches!(self.settings.preset, Preset::H264 | Preset::H265) {
+                    egui::ComboBox::from_id_salt("hardware-encoder")
+                        .selected_text(self.settings.hardware_encoder.label())
+                        .show_ui(ui, |ui| {
+                            for encoder in HardwareEncoder::ALL {
+                                changed |= ui.selectable_value(&mut self.settings.hardware_encoder,
+                                    encoder, encoder.label()).changed();
+                            }
+                        });
+                    ui.small("Requires hardware/driver support and an FFmpeg build exposing the chosen encoder. Software is the reliable default.");
+                } else { ui.small("Hardware selection currently supports H.264 and H.265 functions."); }
             });
 
         egui::CollapsingHeader::new("Cut / trim")
@@ -475,7 +667,7 @@ impl EncoderApp {
                 {
                     ui.colored_label(egui::Color32::LIGHT_RED, "End must be greater than start.");
                 }
-                if self.settings.preset == Preset::RemuxMkv {
+                if matches!(self.settings.preset, Preset::RemuxMkv | Preset::RemuxMp4 | Preset::VideoOnly) {
                     ui.small("Stream-copy trims are keyframe-inexact.");
                 }
             });
@@ -514,7 +706,7 @@ impl EncoderApp {
             });
 
         ui.separator();
-        ui.small("Native Rust UI. Video playback and advanced media filters are planned, not yet available.");
+        ui.small("Rust-native UI · FFmpeg engine. Some specialist functions and realtime editing are still in development.");
         if changed {
             self.mark_settings_changed();
         }

@@ -14,27 +14,49 @@ pub enum Preset {
     Flac,
     Mp3,
     Aac,
+    Opus,
+    RemuxMp4,
+    VideoOnly,
+    PngStill,
+    JpegStill,
+    ExtractSrt,
+    ExtractAss,
+    FrameMd5,
 }
 
 impl Preset {
-    pub const ALL: [Preset; 11] = [
+    pub const ALL: [Preset; 19] = [
         Self::H264, Self::H265, Self::Av1, Self::Vp9, Self::ProRes,
-        Self::Dnxhr, Self::RemuxMkv, Self::Wav, Self::Flac, Self::Mp3, Self::Aac,
+        Self::Dnxhr, Self::RemuxMkv, Self::RemuxMp4, Self::VideoOnly,
+        Self::Wav, Self::Flac, Self::Mp3, Self::Aac, Self::Opus,
+        Self::PngStill, Self::JpegStill, Self::ExtractSrt, Self::ExtractAss,
+        Self::FrameMd5,
     ];
     pub const fn label(self) -> &'static str {
         match self {
             Self::H264 => "H.264 / MP4", Self::H265 => "H.265 / MP4",
             Self::Av1 => "AV1 / MKV", Self::Vp9 => "VP9 / WebM",
             Self::ProRes => "ProRes / MOV", Self::Dnxhr => "DNxHR / MOV",
-            Self::RemuxMkv => "Rewrap / MKV (no encoding)",
+            Self::RemuxMkv => "Rewrap / MKV (stream copy)",
+            Self::RemuxMp4 => "Rewrap / MP4 (stream copy)",
+            Self::VideoOnly => "Extract video / MKV (stream copy)",
+            Self::PngStill => "Extract still frame / PNG",
+            Self::JpegStill => "Extract still frame / JPEG",
+            Self::ExtractSrt => "Extract subtitles / SRT",
+            Self::ExtractAss => "Extract subtitles / ASS",
+            Self::FrameMd5 => "Frame checksum / MD5",
             Self::Wav => "Audio / WAV", Self::Flac => "Audio / FLAC",
             Self::Mp3 => "Audio / MP3", Self::Aac => "Audio / AAC (M4A)",
+            Self::Opus => "Audio / Opus",
         }
     }
     pub const fn extension(self) -> &'static str {
         match self {
             Self::H264 | Self::H265 => "mp4", Self::Av1 | Self::RemuxMkv => "mkv",
             Self::Vp9 => "webm", Self::ProRes | Self::Dnxhr => "mov",
+            Self::RemuxMp4 => "mp4", Self::VideoOnly => "mkv",
+            Self::PngStill => "png", Self::JpegStill => "jpg",
+            Self::ExtractSrt => "srt", Self::ExtractAss => "ass", Self::FrameMd5 => "md5",
             Self::Wav => "wav", Self::Flac => "flac", Self::Mp3 => "mp3", Self::Aac => "m4a",
         }
     }
@@ -42,7 +64,43 @@ impl Preset {
         matches!(self, Self::H264 | Self::H265 | Self::Av1 | Self::Vp9 | Self::ProRes | Self::Dnxhr)
     }
     pub const fn audio_only(self) -> bool {
-        matches!(self, Self::Wav | Self::Flac | Self::Mp3 | Self::Aac)
+        matches!(self, Self::Wav | Self::Flac | Self::Mp3 | Self::Aac | Self::Opus)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HardwareEncoder {
+    #[default]
+    Software,
+    Nvenc,
+    Qsv,
+    Amf,
+    VideoToolbox,
+}
+
+impl HardwareEncoder {
+    pub const ALL: [Self; 5] = [Self::Software, Self::Nvenc, Self::Qsv, Self::Amf, Self::VideoToolbox];
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Software => "CPU / Software",
+            Self::Nvenc => "NVIDIA NVENC",
+            Self::Qsv => "Intel Quick Sync",
+            Self::Amf => "AMD AMF",
+            Self::VideoToolbox => "Apple VideoToolbox",
+        }
+    }
+    pub const fn codec(self, preset: Preset) -> Option<&'static str> {
+        match (self, preset) {
+            (Self::Nvenc, Preset::H264) => Some("h264_nvenc"),
+            (Self::Nvenc, Preset::H265) => Some("hevc_nvenc"),
+            (Self::Qsv, Preset::H264) => Some("h264_qsv"),
+            (Self::Qsv, Preset::H265) => Some("hevc_qsv"),
+            (Self::Amf, Preset::H264) => Some("h264_amf"),
+            (Self::Amf, Preset::H265) => Some("hevc_amf"),
+            (Self::VideoToolbox, Preset::H264) => Some("h264_videotoolbox"),
+            (Self::VideoToolbox, Preset::H265) => Some("hevc_videotoolbox"),
+            _ => None,
+        }
     }
 }
 
@@ -56,6 +114,18 @@ pub struct Settings {
     pub start_seconds: f64,
     pub end_seconds: f64,
     pub normalize_audio: bool,
+    pub hardware_encoder: HardwareEncoder,
+    pub frame_rate: u16, // 0 keeps the source frame rate
+    pub crop_width: u32, // 0 disables crop
+    pub crop_height: u32,
+    pub crop_x: u32,
+    pub crop_y: u32,
+    pub rotate_degrees: u16, // 0/90/180/270
+    pub flip_horizontal: bool,
+    pub flip_vertical: bool,
+    pub audio_stream: i32, // -1 all, -2 none, otherwise zero-based track index
+    pub subtitle_stream: i32, // -1 none, otherwise zero-based track index
+    pub video_stream: u32, // zero-based track index
     pub output_dir: String,
     pub ffmpeg_path: String,
     pub ffprobe_path: String,
@@ -67,7 +137,12 @@ impl Default for Settings {
         Self {
             preset: Preset::H264, quality: 23, target_width: 0,
             audio_bitrate_kbps: 192, start_seconds: 0.0, end_seconds: 0.0,
-            normalize_audio: false, output_dir: String::new(),
+            normalize_audio: false,
+            hardware_encoder: HardwareEncoder::Software, frame_rate: 0,
+            crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
+            rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
+            audio_stream: -1, subtitle_stream: -1, video_stream: 0,
+            output_dir: String::new(),
             ffmpeg_path: String::new(), ffprobe_path: String::new(), dark_theme: true,
         }
     }
@@ -82,6 +157,18 @@ pub struct EncodeOptions {
     pub start_seconds: f64,
     pub end_seconds: f64,
     pub normalize_audio: bool,
+    pub hardware_encoder: HardwareEncoder,
+    pub frame_rate: u16, // 0 keeps the source frame rate
+    pub crop_width: u32, // 0 disables crop
+    pub crop_height: u32,
+    pub crop_x: u32,
+    pub crop_y: u32,
+    pub rotate_degrees: u16, // 0/90/180/270
+    pub flip_horizontal: bool,
+    pub flip_vertical: bool,
+    pub audio_stream: i32, // -1 all, -2 none, otherwise zero-based track index
+    pub subtitle_stream: i32, // -1 none, otherwise zero-based track index
+    pub video_stream: u32, // zero-based track index
     pub output_dir: Option<PathBuf>,
     pub ffmpeg: PathBuf,
 }
@@ -94,6 +181,13 @@ impl Settings {
             audio_bitrate_kbps: self.audio_bitrate_kbps,
             start_seconds: self.start_seconds, end_seconds: self.end_seconds,
             normalize_audio: self.normalize_audio,
+            hardware_encoder: self.hardware_encoder, frame_rate: self.frame_rate,
+            crop_width: self.crop_width, crop_height: self.crop_height,
+            crop_x: self.crop_x, crop_y: self.crop_y,
+            rotate_degrees: self.rotate_degrees,
+            flip_horizontal: self.flip_horizontal, flip_vertical: self.flip_vertical,
+            audio_stream: self.audio_stream, subtitle_stream: self.subtitle_stream,
+            video_stream: self.video_stream,
             output_dir: (!self.output_dir.is_empty()).then(|| PathBuf::from(&self.output_dir)),
             ffmpeg: resolve_tool("ffmpeg", &self.ffmpeg_path),
         }

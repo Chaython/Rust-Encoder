@@ -9,6 +9,27 @@ pub struct MediaInfo {
     pub height: Option<u32>,
     pub audio_codec: Option<String>,
     pub audio_channels: Option<u32>,
+    pub video_tracks: Vec<MediaTrack>,
+    pub audio_tracks: Vec<MediaTrack>,
+    pub subtitle_tracks: Vec<MediaTrack>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MediaTrack {
+    pub codec: String,
+    pub language: Option<String>,
+    pub title: Option<String>,
+    pub channels: Option<u32>,
+}
+
+impl MediaTrack {
+    pub fn description(&self, index: usize) -> String {
+        let mut s = format!("#{} {}", index, self.codec);
+        if let Some(lang) = &self.language { s.push_str(&format!(" [{lang}]")); }
+        if let Some(ch) = self.channels { s.push_str(&format!(" {ch}ch")); }
+        if let Some(title) = &self.title { s.push_str(&format!(" — {title}")); }
+        s
+    }
 }
 
 impl MediaInfo {
@@ -32,7 +53,11 @@ struct ProbeFormat { duration: Option<String> }
 struct ProbeStream {
     codec_type: Option<String>, codec_name: Option<String>,
     width: Option<u32>, height: Option<u32>, channels: Option<u32>, duration: Option<String>,
+    tags: Option<ProbeTags>,
 }
+
+#[derive(Deserialize)]
+struct ProbeTags { language: Option<String>, title: Option<String> }
 
 pub fn probe_file(binary: &Path, path: &Path) -> Result<MediaInfo, String> {
     if !path.is_file() { return Err("Input file does not exist".into()); }
@@ -49,6 +74,18 @@ fn parse_probe(data: &[u8]) -> Result<MediaInfo, String> {
     let parsed: ProbeOutput = serde_json::from_slice(data).map_err(|e| format!("Invalid ffprobe output: {e}"))?;
     let mut info = MediaInfo { duration_sec: parsed.format.and_then(|f| f.duration).and_then(|s| s.parse::<f64>().ok()), ..Default::default() };
     for stream in parsed.streams {
+        let track = MediaTrack {
+            codec: stream.codec_name.clone().unwrap_or_else(|| "unknown".into()),
+            language: stream.tags.as_ref().and_then(|t| t.language.clone()),
+            title: stream.tags.as_ref().and_then(|t| t.title.clone()),
+            channels: stream.channels,
+        };
+        match stream.codec_type.as_deref() {
+            Some("video") => info.video_tracks.push(track),
+            Some("audio") => info.audio_tracks.push(track),
+            Some("subtitle") => info.subtitle_tracks.push(track),
+            _ => {}
+        }
         match stream.codec_type.as_deref() {
             Some("video") if info.video_codec.is_none() => {
                 info.video_codec = stream.codec_name;
@@ -84,10 +121,16 @@ pub struct Thumbnail {
 }
 
 pub fn thumbnail_file(ffmpeg: &Path, path: &Path) -> Result<Thumbnail, String> {
+    thumbnail_file_at(ffmpeg, path, 0.0)
+}
+
+pub fn thumbnail_file_at(ffmpeg: &Path, path: &Path, seek_seconds: f64) -> Result<Thumbnail, String> {
+    if !seek_seconds.is_finite() || seek_seconds < 0.0 { return Err("Invalid thumbnail seek position".into()); }
     if !path.is_file() { return Err("Input file not found".into()); }
     let output = Command::new(ffmpeg)
-        .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-i"])
-        .arg(path)
+        .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-ss"])
+        .arg(format!("{seek_seconds:.3}"))
+        .arg("-i").arg(path)
         .args(["-map", "0:v:0", "-frames:v", "1", "-vf", "scale=640:-2", "-f", "image2pipe", "-vcodec", "png", "pipe:1"])
         .output()
         .map_err(|e| format!("Could not start preview generator: {e}"))?;
@@ -103,10 +146,10 @@ pub fn thumbnail_file(ffmpeg: &Path, path: &Path) -> Result<Thumbnail, String> {
     Ok(Thumbnail { width: width as usize, height: height as usize, rgba: img.into_raw() })
 }
 
-pub fn thumbnail_async(id: u64, ffmpeg: PathBuf, path: PathBuf, sender: crossbeam_channel::Sender<crate::encode::Event>) {
+pub fn thumbnail_async(id: u64, seek_ms: u64, ffmpeg: PathBuf, path: PathBuf, sender: crossbeam_channel::Sender<crate::encode::Event>) {
     std::thread::spawn(move || {
-        let result = thumbnail_file(&ffmpeg, &path);
-        let _ = sender.send(crate::encode::Event::PreviewReady { id, result });
+        let result = thumbnail_file_at(&ffmpeg, &path, seek_ms as f64 / 1000.0);
+        let _ = sender.send(crate::encode::Event::PreviewReady { id, seek_ms, result });
     });
 }
 
@@ -120,6 +163,8 @@ mod tests {
         assert_eq!(info.duration_sec, Some(12.5));
         assert_eq!(info.width, Some(1920));
         assert_eq!(info.audio_codec.as_deref(), Some("aac"));
+        assert_eq!(info.video_tracks.len(), 1);
+        assert_eq!(info.audio_tracks.len(), 1);
     }
     #[test]
     fn missing_duration_is_valid() {
