@@ -190,6 +190,13 @@ impl Default for Settings {
 pub struct EncodeOptions {
     pub preset: Preset,
     pub quality: u8,
+    pub use_video_bitrate: bool,
+    pub video_bitrate_kbps: u32,
+    pub max_video_bitrate_kbps: u32,
+    pub encoder_speed: u8,
+    pub encoder_threads: u8,
+    pub keyframe_interval: u16,
+    pub faststart: bool,
     pub target_width: u32,
     pub audio_bitrate_kbps: u16,
     pub start_seconds: f64,
