@@ -22,15 +22,20 @@ pub enum Preset {
     ExtractSrt,
     ExtractAss,
     FrameMd5,
+    BlackDetect,
+    FreezeDetect,
+    SilenceDetect,
+    LoudnessReport,
 }
 
 impl Preset {
-    pub const ALL: [Preset; 19] = [
+    pub const ALL: [Preset; 23] = [
         Self::H264, Self::H265, Self::Av1, Self::Vp9, Self::ProRes,
         Self::Dnxhr, Self::RemuxMkv, Self::RemuxMp4, Self::VideoOnly,
         Self::Wav, Self::Flac, Self::Mp3, Self::Aac, Self::Opus,
         Self::PngStill, Self::JpegStill, Self::ExtractSrt, Self::ExtractAss,
-        Self::FrameMd5,
+        Self::FrameMd5, Self::BlackDetect, Self::FreezeDetect,
+        Self::SilenceDetect, Self::LoudnessReport,
     ];
     pub const fn label(self) -> &'static str {
         match self {
@@ -45,6 +50,10 @@ impl Preset {
             Self::ExtractSrt => "Extract subtitles / SRT",
             Self::ExtractAss => "Extract subtitles / ASS",
             Self::FrameMd5 => "Frame checksum / MD5",
+            Self::BlackDetect => "Detect black frames / TXT",
+            Self::FreezeDetect => "Detect frozen video / TXT",
+            Self::SilenceDetect => "Detect silent audio / TXT",
+            Self::LoudnessReport => "Measure EBU R128 loudness / TXT",
             Self::Wav => "Audio / WAV", Self::Flac => "Audio / FLAC",
             Self::Mp3 => "Audio / MP3", Self::Aac => "Audio / AAC (M4A)",
             Self::Opus => "Audio / Opus",
@@ -57,11 +66,15 @@ impl Preset {
             Self::RemuxMp4 => "mp4", Self::VideoOnly => "mkv",
             Self::PngStill => "png", Self::JpegStill => "jpg",
             Self::ExtractSrt => "srt", Self::ExtractAss => "ass", Self::FrameMd5 => "md5",
-            Self::Wav => "wav", Self::Flac => "flac", Self::Mp3 => "mp3", Self::Aac => "m4a",
+            Self::BlackDetect | Self::FreezeDetect | Self::SilenceDetect | Self::LoudnessReport => "txt",
+            Self::Wav => "wav", Self::Flac => "flac", Self::Mp3 => "mp3", Self::Aac => "m4a", Self::Opus => "opus",
         }
     }
     pub const fn video(self) -> bool {
         matches!(self, Self::H264 | Self::H265 | Self::Av1 | Self::Vp9 | Self::ProRes | Self::Dnxhr)
+    }
+    pub const fn report(self) -> bool {
+        matches!(self, Self::BlackDetect | Self::FreezeDetect | Self::SilenceDetect | Self::LoudnessReport)
     }
     pub const fn audio_only(self) -> bool {
         matches!(self, Self::Wav | Self::Flac | Self::Mp3 | Self::Aac | Self::Opus)

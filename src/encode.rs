@@ -33,27 +33,27 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     if options.end_seconds != 0.0 && options.end_seconds <= options.start_seconds {
         return Err("Trim end must be greater than start (or 0 to disable)".into());
     }
-    if o.frame_rate > 240 {
+    if options.frame_rate > 240 {
         return Err("Frame rate must be 0 (original) or 1–240".into());
     }
-    if o.crop_width != 0 || o.crop_height != 0 {
-        if o.crop_width < 2 || o.crop_height < 2 || o.crop_width > 16384 || o.crop_height > 16384 {
+    if options.crop_width != 0 || options.crop_height != 0 {
+        if options.crop_width < 2 || options.crop_height < 2 || options.crop_width > 16384 || options.crop_height > 16384 {
             return Err("Crop width and height must both be 2–16384".into());
         }
     }
-    if !matches!(o.rotate_degrees, 0 | 90 | 180 | 270) {
+    if !matches!(options.rotate_degrees, 0 | 90 | 180 | 270) {
         return Err("Rotation must be 0, 90, 180 or 270 degrees".into());
     }
-    if o.audio_stream < -2 || o.subtitle_stream < -1 {
+    if options.audio_stream < -2 || options.subtitle_stream < -1 {
         return Err("Invalid audio or subtitle stream index".into());
     }
-    if o.hardware_encoder != HardwareEncoder::Software
-        && o.hardware_encoder.codec(o.preset).is_none() {
+    if options.hardware_encoder != HardwareEncoder::Software
+        && options.hardware_encoder.codec(options.preset).is_none() {
         return Err("This hardware encoder supports H.264/H.265 only. Switch to CPU/software for other functions".into());
     }
-    if !o.preset.video() && (
-        o.frame_rate != 0 || o.crop_width != 0 || o.crop_height != 0 ||
-        o.rotate_degrees != 0 || o.flip_horizontal || o.flip_vertical || o.target_width != 0
+    if !options.preset.video() && (
+        options.frame_rate != 0 || options.crop_width != 0 || options.crop_height != 0 ||
+        options.rotate_degrees != 0 || options.flip_horizontal || options.flip_vertical || options.target_width != 0
     ) {
         return Err("Video filters require a video-encoding function. Disable filters for copying, extraction or audio functions".into());
     }
@@ -74,7 +74,8 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
     if !input.is_file() { return Err("Input does not exist".into()); }
     if input == temp_output { return Err("Input and output must differ".into()); }
 
-    let mut args: Vec<OsString> = ["-nostdin", "-hide_banner", "-loglevel", "error", "-nostats",
+    let loglevel = if o.preset.report() { "info" } else { "error" };
+    let mut args: Vec<OsString> = ["-nostdin", "-hide_banner", "-loglevel", loglevel, "-nostats",
         "-stats_period", "0.25", "-progress", "pipe:1", "-n"]
         .iter().map(|v| OsString::from(*v)).collect();
     macro_rules! arg { ($value:expr) => { args.push(OsString::from(($value).to_string())) }; }
@@ -86,6 +87,20 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
         arg!("-t"); arg!(&format!("{:.3}", o.end_seconds - o.start_seconds));
     }
     match o.preset {
+        Preset::BlackDetect | Preset::FreezeDetect => {
+            arg!("-map"); arg!(&format!("0:v:{}", o.video_stream));
+            arg!("-vf"); arg!(if o.preset == Preset::BlackDetect {
+                "blackdetect=d=0.5:pix_th=0.10"
+            } else { "freezedetect=n=-60dB:d=0.5" });
+            for a in ["-an", "-sn", "-f", "null"] { arg!(a); }
+        }
+        Preset::SilenceDetect | Preset::LoudnessReport => {
+            arg!("-map"); arg!(&format!("0:a:{}", o.audio_stream.max(0)));
+            arg!("-af"); arg!(if o.preset == Preset::SilenceDetect {
+                "silencedetect=n=-50dB:d=0.5"
+            } else { "ebur128=peak=true" });
+            for a in ["-vn", "-sn", "-f", "null"] { arg!(a); }
+        }
         Preset::RemuxMkv => {
             // Preserve all streams (including subtitles, chapters, attachments and metadata).
             for a in ["-map", "0", "-c", "copy", "-map_metadata", "0", "-map_chapters", "0"] { arg!(a); }
@@ -192,7 +207,13 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
             if matches!(preset, Preset::H264 | Preset::H265) { arg!("-movflags"); arg!("+faststart"); }
         }
     }
-    args.push(temp_output.as_os_str().to_owned());
+    if o.preset.report() {
+        // Null output forces full decoding/filter traversal; diagnostic lines are
+        // collected from stderr into the output TXT after successful execution.
+        arg!("-");
+    } else {
+        args.push(temp_output.as_os_str().to_owned());
+    }
     Ok(args)
 }
 
@@ -202,7 +223,9 @@ fn tag(preset: Preset) -> &'static str {
         Preset::Vp9 => "vp9", Preset::ProRes => "prores", Preset::Dnxhr => "dnxhr",
         Preset::RemuxMkv => "rewrap", Preset::RemuxMp4 => "rewrap_mp4",
         Preset::VideoOnly => "video", Preset::PngStill => "still",
-        Preset::JpegStill => "still", Preset::ExtractSrt => "subtitles",
+        Preset::JpegStill => "still", Preset::BlackDetect => "black_report",
+        Preset::FreezeDetect => "freeze_report", Preset::SilenceDetect => "silence_report",
+        Preset::LoudnessReport => "loudness_report", Preset::ExtractSrt => "subtitles",
         Preset::ExtractAss => "subtitles", Preset::FrameMd5 => "checksums",
         Preset::Wav => "wav", Preset::Flac => "flac",
         Preset::Mp3 => "mp3", Preset::Aac => "aac", Preset::Opus => "opus",
@@ -317,12 +340,13 @@ fn run_job(id: u64, input: &Path, options: &EncodeOptions, tx: &Sender<Event>, c
     let stderr = child.stderr.take().ok_or("Cannot capture FFmpeg diagnostics")?;
     let errors = Arc::new(Mutex::new(VecDeque::<String>::with_capacity(64)));
     let error_sink = Arc::clone(&errors);
+    let report_lines = if options.preset.report() { 4096 } else { 64 };
     let stderr_handle = thread::spawn(move || {
         for line in BufReader::new(stderr).lines() {
             match line {
                 Ok(line) => {
                     if let Ok(mut tail) = error_sink.lock() {
-                        if tail.len() == 64 { tail.pop_front(); }
+                        if tail.len() == report_lines { tail.pop_front(); }
                         tail.push_back(line.chars().take(4096).collect());
                     }
                 }
@@ -361,6 +385,13 @@ fn run_job(id: u64, input: &Path, options: &EncodeOptions, tx: &Sender<Event>, c
         return Err(format!("FFmpeg exited with {status}: {}", if stderr.is_empty() { "No details; inspect codecs and input" } else { &stderr }));
     }
     if cancelled.load(Ordering::SeqCst) { let _ = fs::remove_file(&temp); return Err("Cancelled".into()); }
+    if options.preset.report() {
+        let report = errors.lock().map_err(|_| "Could not gather analyzer diagnostics".to_owned())?
+            .iter().cloned().collect::<Vec<_>>().join("\n");
+        fs::write(&temp, format!("Rust Encoder analysis: {:?}\nInput: {}\n\n{}\n",
+            options.preset, input.display(), report))
+            .map_err(|e| format!("Could not save media analysis report: {e}"))?;
+    }
     finalize_output(&temp, &output).map_err(|e| format!("Could not finalize output {}: {e}; intermediate file: {}", output.display(), temp.display()))?;
     let _ = tx.send(Event::Completed { id, output });
     Ok(())

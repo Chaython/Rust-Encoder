@@ -508,6 +508,8 @@ impl EncoderApp {
                     ui.label("Resize width (0 = retain source size)");
                     changed |= ui.add(egui::DragValue::new(&mut self.settings.target_width)
                         .range(0..=16384).speed(2)).changed();
+                } else if self.settings.preset.report() {
+                    ui.small("Analysis reads the media and writes FFmpeg diagnostic findings to a text report.");
                 } else if matches!(self.settings.preset, Preset::RemuxMkv | Preset::RemuxMp4 | Preset::VideoOnly) {
                     ui.small("Lossless stream copy. Video scaling and filters are unavailable.");
                 } else {
@@ -522,7 +524,8 @@ impl EncoderApp {
                     ui.label("Audio bitrate (kb/s)");
                     changed |= ui.add(egui::Slider::new(&mut self.settings.audio_bitrate_kbps, 32..=512)).changed();
                 }
-                if self.settings.preset.video() || self.settings.preset.audio_only() {
+                if self.settings.preset.video() || self.settings.preset.audio_only()
+                    || matches!(self.settings.preset, Preset::SilenceDetect | Preset::LoudnessReport) {
                     changed |= ui.checkbox(&mut self.settings.normalize_audio, "Normalize loudness (one-pass)").changed();
                 } else {
                     ui.small("Audio is copied without processing.");
@@ -583,7 +586,8 @@ impl EncoderApp {
                 let selected_info = self.jobs.iter()
                     .find(|j| Some(j.id) == self.selected_job).and_then(|j| j.media.as_ref());
                 if self.settings.preset.video() || matches!(self.settings.preset,
-                    Preset::VideoOnly | Preset::FrameMd5 | Preset::PngStill | Preset::JpegStill) {
+                    Preset::VideoOnly | Preset::FrameMd5 | Preset::PngStill | Preset::JpegStill |
+                    Preset::BlackDetect | Preset::FreezeDetect) {
                     ui.label("Video track (0 = first)");
                     changed |= ui.add(egui::DragValue::new(&mut self.settings.video_stream)
                         .range(0..=32)).changed();

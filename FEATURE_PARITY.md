@@ -10,7 +10,7 @@ This matrix is an **acceptance-tracking document**. Existing controls are not pr
 | Stream handling | Video/audio track indices, subtitle index/convert/extract; FFprobe metadata | Multi-language subtitle editing, external subs, burn-in, attachment editor, batch track routing |
 | Video filters | Resize, crop, flip, rotate, output FPS | Interpolation, VFR/CFR management, LUT/color grading, deinterlacing, overlays, advanced filters |
 | Image processing | Single PNG/JPEG frame extraction, seek position preview | Whole image-sequence workflows, RAW conversion, EXIF/meta, image batch editor |
-| Detection and analysis | Frame MD5, metadata inspection | Black/freeze/silence/offline detection, loudness graph, VMAF, reports |
+| Detection and analysis | Frame MD5, black/freeze/silence detection, EBU R128 measurement, metadata inspection | Custom detection thresholds, offline detection, detailed loudness graph, VMAF, richer analysis reports |
 | Native UI | File queue, themes, metadata/preview, filters, persisted settings/profiles | Real-time player, timeline/waveform, docking, richer per-job editors, keyboard/accessibility |
 | Automation | Batch queue, cancel/retry, JSON profiles | Watch folders, command jobs, network upload, job recovery, schedule, scripting |
 | AI / utility tools | Not implemented | Upscaling, background removal, transcript/translation, yt-dlp, specialist utilities |

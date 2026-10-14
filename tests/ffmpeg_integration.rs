@@ -1,7 +1,8 @@
 //! End-to-end FFmpeg tests. Skipped on development machines without FFmpeg.
 //! Linux CI installs FFmpeg so these are exercised there.
 use rust_encoder::{encode, model::{HardwareEncoder, EncodeOptions, Preset}};
-use std::{fs, path::{Path, PathBuf}, process::Command};
+use std::{fs, path::{Path, PathBuf}, process::Command,
+    sync::{Arc, atomic::AtomicBool}, time::Duration};
 
 fn options(preset: Preset) -> EncodeOptions {
     EncodeOptions {
@@ -37,9 +38,11 @@ fn conversion_preview_audio_and_remux_finish() {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let input = fixture(&dir);
-    for preset in [Preset::H264, Preset::RemuxMkv, Preset::RemuxMp4, Preset::VideoOnly,
+    for (index, preset) in [Preset::H264, Preset::RemuxMkv, Preset::RemuxMp4, Preset::VideoOnly,
                    Preset::Wav, Preset::Flac, Preset::Mp3, Preset::Aac,
-                   Preset::PngStill, Preset::JpegStill, Preset::FrameMd5] {
+                   Preset::PngStill, Preset::JpegStill, Preset::FrameMd5,
+                   Preset::BlackDetect, Preset::FreezeDetect, Preset::SilenceDetect,
+                   Preset::LoudnessReport].into_iter().enumerate() {
         let output = dir.join(format!("test-{preset:?}.{}", preset.extension()));
         let mut options = options(preset);
         if preset == Preset::H264 {
@@ -48,10 +51,28 @@ fn conversion_preview_audio_and_remux_finish() {
             options.rotate_degrees = 90;
             options.frame_rate = 5;
         }
-        let args = encode::build_args(&input, &output, &options).unwrap();
-        command_ok(Command::new("ffmpeg").args(args));
-        assert!(output.exists(), "missing output for {preset:?}");
-        assert!(fs::metadata(output).unwrap().len() > 0, "empty {preset:?}");
+        if preset.report() {
+            // Run the real background worker, not only its command builder;
+            // the worker captures filter diagnostics and finalizes an analysis TXT.
+            let (tx, rx) = crossbeam_channel::unbounded();
+            encode::start_job(900 + index as u64, input.clone(), options,
+                tx, Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+            let report_path = loop {
+                match rx.recv_timeout(Duration::from_secs(25)).expect("analyzer timed out") {
+                    encode::Event::Completed { output, .. } => break output,
+                    encode::Event::Failed { message, .. } => panic!("{preset:?}: {message}"),
+                    encode::Event::Cancelled { .. } => panic!("Unexpected cancellation"),
+                    _ => {}
+                }
+            };
+            assert!(report_path.is_file(), "missing analysis file for {preset:?}");
+            assert!(fs::metadata(report_path).unwrap().len() > 30);
+        } else {
+            let args = encode::build_args(&input, &output, &options).unwrap();
+            command_ok(Command::new("ffmpeg").args(args));
+            assert!(output.exists(), "missing output for {preset:?}");
+            assert!(fs::metadata(output).unwrap().len() > 0, "empty {preset:?}");
+        }
     }
     fs::remove_dir_all(dir).unwrap();
 }

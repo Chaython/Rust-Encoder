@@ -5,7 +5,7 @@ See [FEATURE_PARITY.md](FEATURE_PARITY.md) for a more granular list. A checked e
 ## Encoding foundation
 - [x] Rust GUI, queued jobs, portable cross-platform CI builds
 - [x] Asynchronous metadata/progress, status, error reporting, cancellation
-- [x] 19 FFmpeg-backed functions, including rewrap, audio extraction, still extraction, subtitles and MD5
+- [x] 23 FFmpeg-backed functions, including rewrap, audio extraction, still extraction, subtitles, MD5 and media diagnostics
 - [x] Seekable still-frame previews; track language/channel metadata
 - [x] Trim, resize, crop, rotate, flips, output FPS, one-pass normalization, stream selection
 - [x] Manual H.264/H.265 GPU encoder selections; saved JSON profiles
@@ -17,7 +17,7 @@ See [FEATURE_PARITY.md](FEATURE_PARITY.md) for a more granular list. A checked e
 ## Editing, analysis and specialist tools
 - [ ] Native video player, synchronized waveform and timeline, multi-point editing
 - [ ] Frame-accurate cuts, EDL/XML/project interchange, retiming and merge pipelines
-- [ ] Black/silence/offline detection, full loudness analysis, VMAF and logs
+- [ ] Advanced detection thresholds, offline detection, VMAF and comparative analysis
 - [ ] Audio track replacement, merging, separation and multi-track control
 - [ ] Image sequences, still batch, RAW/EXIF, professional image workflows
 - [ ] Download integrations, transcription/translation and AI imaging utilities

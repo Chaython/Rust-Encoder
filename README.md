@@ -9,12 +9,12 @@ Rust-native desktop media converter and batch processing tool built with **egui/
 - Desktop GUI with resize-friendly queue and settings, dark/light theme, drag/drop, file picker and per-file still-frame preview **with seek position** (not a realtime player).
 - Background FFprobe metadata inspection with video/audio/subtitle track listings (including language and channel count when available).
 - Queued jobs, batch execution, retry, pause-after-current, cancellation, FFmpeg progress, safe temporary outputs and non-overwriting filenames.
-- **19 functions:** H.264, H.265/HEVC, AV1, VP9, ProRes, DNxHR, MKV rewrap, MP4 rewrap, video-only stream copy, WAV, FLAC, MP3, AAC, Opus, PNG still, JPEG still, SRT subtitle extraction, ASS subtitle extraction and frame MD5 checksums.
+- **23 functions:** H.264, H.265/HEVC, AV1, VP9, ProRes, DNxHR, MKV rewrap, MP4 rewrap, video-only stream copy, WAV, FLAC, MP3, AAC, Opus, PNG still, JPEG still, SRT subtitle extraction, ASS subtitle extraction, frame MD5 checksums, black-frame detection, frozen-frame detection, silence detection, and EBU R128 loudness analysis.
 - Encoding controls for CRF, audio bitrate, resize, crop, rotation, flips, output FPS, trim, loudness normalization (one-pass), manual audio/video/subtitle track mapping.
 - Optional manual NVENC, Intel Quick Sync, AMD AMF, Apple VideoToolbox selection for H.264 and H.265. FFmpeg must include the selected encoder and compatible drivers; GPU capability detection/fallback is **not** implemented.
 - Save/load JSON settings profiles. Newer settings load older profiles with defaults for unknown fields.
 
-**Limitations:** MKV rewrap copies all streams, whereas MP4 rewrap copies audio/video only (MP4 cannot handle arbitrary stream types). Subtitles for encoded video are converted to a codec appropriate for the container where possible; the source must contain an accessible subtitle track. Audio extraction selects one track. Still-frame extraction exports one frame. Cut accuracy when stream-copying depends on keyframes. Crop values must fit the input picture. Hardware encoders may require drivers and different rate control options.
+**Limitations:** MKV rewrap copies all streams, whereas MP4 rewrap copies audio/video only (MP4 cannot handle arbitrary stream types). Subtitles for encoded video are converted to a codec appropriate for the container where possible; the source must contain an accessible subtitle track. Audio extraction selects one track. Still-frame extraction exports one frame. Analysis functions scan media and save FFmpeg diagnostic reports as text. Analysis thresholds are currently fixed defaults (0.5-second black/frozen/silence intervals, -50 dB silence, EBU R128 loudness). Cut accuracy when stream-copying depends on keyframes. Crop values must fit the input picture. Hardware encoders may require drivers and different rate control options.
 
 ## Dependencies
 
