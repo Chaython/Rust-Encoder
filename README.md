@@ -63,6 +63,14 @@ Video functions now support **constant-quality (CRF) or target-bitrate** encodin
 
 For identical output quality, speed settings change encoding time and compression efficiency rather than promising a universal speedup; the hardware backend and video filters remain performance bottlenecks. Estimates based on input duration and video/audio bitrates are approximate, not guarantees. Existing JSON profiles load with backward-compatible defaults.
 
+## Importing Shutter Encoder presets (.enc)
+
+Use **Import Shutter preset…** in the main toolbar to select an existing Shutter Encoder `.enc` preset. These files are XML documents containing saved UI component names and values; they are **not** Rust Encoder JSON profiles. You can find Shutter Encoder's user presets in the `Documents/Shutter Encoder/Functions` directory on typical installations.
+
+Import is **best effort, not full parity**. Currently mapped: H.264, H.265, AV1, VP9, ProRes, DNxHR and several audio functions; recognized hardware choices; MP4 faststart, audio normalization, audio bitrate, GOP length, and max-quality speed intent. Unsupported functions are refused. Existing output folder, FFmpeg/FFprobe/FFplay paths, and UI preferences are preserved; active encodes are unaffected. The original `.enc` file is read-only and never rewritten. A result message lists mapped settings and known unsupported active options.
+
+**Important:** Legacy presets can contain hundreds of options; features such as complex color filters, overlays, exact bitrate modes, trim logic, and arbitrary extra FFmpeg arguments are **not imported**. Review all settings before encoding. A successful import is not confirmation of 1:1 behavior.
+
 ## Media output / presets
 
 1. Add source files via picker or drop. Wait for FFprobe to inspect them.
