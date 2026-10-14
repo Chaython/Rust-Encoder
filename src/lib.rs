@@ -7,3 +7,4 @@ pub mod player;
 pub mod preview_stream;
 pub mod audio_preview;
 pub mod dependencies;
+pub mod hardware;

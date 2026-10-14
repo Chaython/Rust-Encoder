@@ -8,6 +8,7 @@ use rust_encoder::{
     preview_stream::{self, NativeVideoPreview},
     audio_preview::NativeAudioPreview,
     dependencies::{self, State as DependencyState},
+    hardware::{self, Capabilities},
 };
 use std::{
     path::PathBuf,
@@ -72,6 +73,11 @@ pub struct EncoderApp {
     dependency_sender: Sender<DependencyState>,
     dependency_receiver: Receiver<DependencyState>,
     dependency_state: DependencyState,
+    hardware_sender: Sender<Result<Capabilities, String>>,
+    hardware_receiver: Receiver<Result<Capabilities, String>>,
+    hardware_scan: Option<Capabilities>,
+    hardware_error: Option<String>,
+    hardware_scanning: bool,
     pending_input_paths: Vec<PathBuf>,
     next_id: u64,
     selected_job: Option<u64>,
@@ -109,6 +115,7 @@ impl EncoderApp {
     pub fn new() -> Self {
         let (sender, receiver) = crossbeam_channel::unbounded();
         let (dependency_sender, dependency_receiver) = crossbeam_channel::unbounded();
+        let (hardware_sender, hardware_receiver) = crossbeam_channel::unbounded();
         let settings = model::load_settings();
         // Unit tests construct the GUI without a running desktop session.
         // Never trigger external network installers merely by constructing a test app.
@@ -127,6 +134,11 @@ impl EncoderApp {
             dependency_sender,
             dependency_receiver,
             dependency_state: DependencyState::Checking,
+            hardware_sender,
+            hardware_receiver,
+            hardware_scan: None,
+            hardware_error: None,
+            hardware_scanning: false,
             pending_input_paths: Vec::new(),
             next_id: 1,
             selected_job: None,
@@ -235,9 +247,45 @@ impl EncoderApp {
             }
             let ready = matches!(state, DependencyState::Ready { .. });
             self.dependency_state = state;
+            if ready && !self.hardware_scanning && self.hardware_scan.is_none() {
+                self.start_hardware_scan();
+            }
             if ready && !self.pending_input_paths.is_empty() {
                 let paths = std::mem::take(&mut self.pending_input_paths);
                 self.add_files(paths);
+            }
+        }
+    }
+
+    fn start_hardware_scan(&mut self) {
+        self.hardware_scanning = true;
+        self.hardware_error = None;
+        self.hardware_scan = None;
+        hardware::start_scan(
+            model::resolve_tool("ffmpeg", &self.settings.ffmpeg_path),
+            self.hardware_sender.clone(),
+        );
+    }
+
+    fn poll_hardware_scan(&mut self) {
+        while let Ok(result) = self.hardware_receiver.try_recv() {
+            self.hardware_scanning = false;
+            match result {
+                Ok(report) => {
+                    if report.ffmpeg != model::resolve_tool("ffmpeg", &self.settings.ffmpeg_path) {
+                        continue; // an older scan finished after executable change
+                    }
+                    if !report.supports(self.settings.hardware_encoder, self.settings.preset)
+                        && self.settings.hardware_encoder != HardwareEncoder::Software
+                    {
+                        self.settings.hardware_encoder = HardwareEncoder::Software;
+                        self.settings.two_pass = false;
+                        self.mark_settings_changed();
+                        self.notice = "Previously selected hardware encoder is unavailable. Using software.".into();
+                    }
+                    self.hardware_scan = Some(report);
+                }
+                Err(error) => self.hardware_error = Some(error),
             }
         }
     }
@@ -1385,15 +1433,36 @@ impl EncoderApp {
             .default_open(false)
             .show(ui, |ui| {
                 if matches!(self.settings.preset, Preset::H264 | Preset::H265) {
+                    ui.horizontal(|ui| {
+                        if self.hardware_scanning {
+                            ui.spinner(); ui.small("Testing hardware encoders…");
+                        } else if ui.button("Rescan hardware").clicked() {
+                            self.start_hardware_scan();
+                        }
+                    });
+                    if let Some(error) = &self.hardware_error {
+                        ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    }
                     egui::ComboBox::from_id_salt("hardware-encoder")
                         .selected_text(self.settings.hardware_encoder.label())
                         .show_ui(ui, |ui| {
                             for encoder in HardwareEncoder::ALL {
-                                changed |= ui.selectable_value(&mut self.settings.hardware_encoder,
-                                    encoder, encoder.label()).changed();
+                                let supported = encoder == HardwareEncoder::Software
+                                    || self.hardware_scan.as_ref().is_some_and(|report|
+                                        report.supports(encoder, self.settings.preset));
+                                changed |= ui.add_enabled(supported,
+                                    egui::Button::selectable(
+                                        self.settings.hardware_encoder == encoder,
+                                        encoder.label(),
+                                    )).clicked().then(|| {
+                                        self.settings.hardware_encoder = encoder;
+                                        if encoder != HardwareEncoder::Software {
+                                            self.settings.two_pass = false;
+                                        }
+                                    }).is_some();
                             }
                         });
-                    ui.small("Requires hardware/driver support and an FFmpeg build exposing the chosen encoder. Software is the reliable default.");
+                    ui.small("Hardware choices are enabled only after FFmpeg completes a real one-frame encode with the installed driver. Scan runs in the background.");
                 } else { ui.small("Hardware selection currently supports H.264 and H.265 functions."); }
             });
 
@@ -1550,6 +1619,7 @@ impl eframe::App for EncoderApp {
     // eframe 0.36 uses `App::ui` for the native root viewport.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_dependencies();
+        self.poll_hardware_scan();
         self.poll_events();
         self.refresh_av_player();
         self.update_native_video(ui.ctx());
@@ -1645,6 +1715,7 @@ impl eframe::App for EncoderApp {
             || self.jobs.iter().any(|j| matches!(j.status, JobState::Analyzing))
             || self.preview_loading || self.preview_playing || self.av_player.is_some()
             || self.native_video.is_some() || self.native_audio.is_some()
+            || self.hardware_scanning
             || matches!(self.dependency_state, DependencyState::Checking | DependencyState::Downloading(_) | DependencyState::Extracting)
         {
             ui.ctx().request_repaint_after(Duration::from_millis(100));

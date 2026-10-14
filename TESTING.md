@@ -84,3 +84,7 @@ No realtime video player, synchronized waveform/editor timeline, bulk image sequ
 - Pass 1 uses the chosen video encoder and filters but disables audio/subtitles and discards video into the null muxer; Pass 2 uses saved encoder statistics and writes the only final output.
 - The application keeps the statistics in a job-unique directory and removes it on completion, failure, or cancellation. Progress is labeled Pass 1/2 or Pass 2/2.
 - Linux FFmpeg integration verifies both passes run, checks the output with FFprobe, and confirms passlogs do not remain.
+
+## Hardware codec detection
+- The background scan verifies both `ffmpeg -encoders` and a real one-frame null output for each hardware codec. Encoders that are listed but lack a working GPU/driver are disabled.
+- An existing hardware choice is reset to CPU/software if it cannot be used; users can rescan after FFmpeg/driver changes. Test with actual NVIDIA, AMD, Intel and Apple machines, not just CI virtual runners.

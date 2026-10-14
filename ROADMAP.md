@@ -48,3 +48,5 @@ See [FEATURE_PARITY.md](FEATURE_PARITY.md) for a more granular list. A checked e
 
 - [x] FFmpeg two-pass H.264/VP9 target bitrate with cancellable passes, isolated stats and cleanup
 - [ ] Extend tested two-pass support to HEVC and AV1 via encoder-specific pass handling
+
+- [x] Background hardware encoder probing with actual one-frame encoding tests for NVENC/QSV/AMF/VideoToolbox H.264/HEVC
