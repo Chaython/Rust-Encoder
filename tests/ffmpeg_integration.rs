@@ -6,7 +6,11 @@ use std::{fs, path::{Path, PathBuf}, process::Command,
 
 fn options(preset: Preset) -> EncodeOptions {
     EncodeOptions {
-        preset, quality: 25, target_width: 0, audio_bitrate_kbps: 128,
+        preset, quality: 25,
+        use_video_bitrate: false, video_bitrate_kbps: 4000,
+        max_video_bitrate_kbps: 0, encoder_speed: 1, encoder_threads: 0,
+        keyframe_interval: 0, faststart: true,
+        target_width: 0, audio_bitrate_kbps: 128,
         start_seconds: 0.0, end_seconds: 0.0, normalize_audio: false,
         hardware_encoder: HardwareEncoder::Software, frame_rate: 0,
         crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,

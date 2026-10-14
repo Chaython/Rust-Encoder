@@ -122,6 +122,13 @@ impl HardwareEncoder {
 pub struct Settings {
     pub preset: Preset,
     pub quality: u8,
+    pub use_video_bitrate: bool,
+    pub video_bitrate_kbps: u32,
+    pub max_video_bitrate_kbps: u32, // 0 = no maximum
+    pub encoder_speed: u8, // 0 faster, 1 balanced, 2 better compression
+    pub encoder_threads: u8, // 0 = automatic
+    pub keyframe_interval: u16, // 0 = automatic
+    pub faststart: bool,
     pub target_width: u32,
     pub audio_bitrate_kbps: u16,
     pub start_seconds: f64,
@@ -159,7 +166,10 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            preset: Preset::H264, quality: 23, target_width: 0,
+            preset: Preset::H264, quality: 23,
+            use_video_bitrate: false, video_bitrate_kbps: 4000,
+            max_video_bitrate_kbps: 0, encoder_speed: 1, encoder_threads: 0,
+            keyframe_interval: 0, faststart: true, target_width: 0,
             audio_bitrate_kbps: 192, start_seconds: 0.0, end_seconds: 0.0,
             normalize_audio: false,
             hardware_encoder: HardwareEncoder::Software, frame_rate: 0,
@@ -215,7 +225,12 @@ impl Settings {
     pub fn encode_options(&self) -> EncodeOptions {
         EncodeOptions {
             preset: self.preset,
-            quality: self.quality, target_width: self.target_width,
+            quality: self.quality, use_video_bitrate: self.use_video_bitrate,
+            video_bitrate_kbps: self.video_bitrate_kbps,
+            max_video_bitrate_kbps: self.max_video_bitrate_kbps,
+            encoder_speed: self.encoder_speed, encoder_threads: self.encoder_threads,
+            keyframe_interval: self.keyframe_interval, faststart: self.faststart,
+            target_width: self.target_width,
             audio_bitrate_kbps: self.audio_bitrate_kbps,
             start_seconds: self.start_seconds, end_seconds: self.end_seconds,
             normalize_audio: self.normalize_audio,

@@ -21,6 +21,18 @@ pub enum Event {
 
 pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     if options.quality > 51 { return Err("Quality (CRF) must be between 0 and 51".into()); }
+    if options.encoder_speed > 2 { return Err("Encoder speed must be 0–2".into()); }
+    if options.encoder_threads > 32 { return Err("Encoder threads must be 0–32".into()); }
+    if options.keyframe_interval > 1000 { return Err("Keyframe interval must be 0–1000".into()); }
+    if options.use_video_bitrate && options.preset.video() {
+        if !(100..=100_000).contains(&options.video_bitrate_kbps) {
+            return Err("Target bitrate must be 100–100000 kb/s".into());
+        }
+        if options.max_video_bitrate_kbps != 0 && (options.max_video_bitrate_kbps < options.video_bitrate_kbps
+            || options.max_video_bitrate_kbps > 200_000) {
+            return Err("Peak bitrate must be at least target and ≤ 200000 kb/s".into());
+        }
+    }
     if options.target_width != 0 && (options.target_width < 64 || options.target_width > 16384) {
         return Err("Target width must be 0 (original) or 64–16384".into());
     }
@@ -196,26 +208,62 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
                     else if matches!(preset, Preset::H264 | Preset::H265 | Preset::ProRes | Preset::Dnxhr) { "mov_text" }
                     else { "srt" });
             }
+            let bitrate = o.use_video_bitrate;
             match preset {
                 Preset::H264 | Preset::H265 if o.hardware_encoder != HardwareEncoder::Software => {
                     let codec = o.hardware_encoder.codec(preset).ok_or("Unsupported hardware codec")?;
                     arg!("-c:v"); arg!(codec);
-                    match o.hardware_encoder {
-                        HardwareEncoder::Nvenc => { arg!("-rc"); arg!("vbr"); arg!("-cq"); arg!(&o.quality.to_string()); arg!("-b:v"); arg!("0"); }
-                        HardwareEncoder::Qsv => { arg!("-global_quality"); arg!(&o.quality.to_string()); }
-                        HardwareEncoder::Amf => { arg!("-rc"); arg!("cqp"); arg!("-qp_i"); arg!(&o.quality.to_string()); arg!("-qp_p"); arg!(&o.quality.to_string()); }
-                        HardwareEncoder::VideoToolbox => { arg!("-b:v"); arg!("6M"); }
-                        HardwareEncoder::Software => unreachable!(),
+                    if bitrate {
+                        if o.hardware_encoder == HardwareEncoder::Amf { arg!("-rc"); arg!("vbr_peak"); }
+                        arg!("-b:v"); arg!(&format!("{}k", o.video_bitrate_kbps));
+                    } else {
+                        match o.hardware_encoder {
+                            HardwareEncoder::Nvenc => {
+                                arg!("-rc"); arg!("vbr"); arg!("-cq"); arg!(&o.quality.to_string());
+                                arg!("-b:v"); arg!("0");
+                            }
+                            HardwareEncoder::Qsv => { arg!("-global_quality"); arg!(&o.quality.to_string()); }
+                            HardwareEncoder::Amf => {
+                                arg!("-rc"); arg!("cqp");
+                                arg!("-qp_i"); arg!(&o.quality.to_string());
+                                arg!("-qp_p"); arg!(&o.quality.to_string());
+                            }
+                            HardwareEncoder::VideoToolbox => { arg!("-b:v"); arg!("6M"); }
+                            HardwareEncoder::Software => unreachable!(),
+                        }
                     }
                 }
-                Preset::H264 => { arg!("-c:v"); arg!("libx264"); arg!("-crf"); arg!(&o.quality.to_string()); arg!("-preset"); arg!("medium"); }
-                Preset::H265 => { arg!("-c:v"); arg!("libx265"); arg!("-crf"); arg!(&o.quality.to_string()); arg!("-preset"); arg!("medium"); }
-                Preset::Av1 => { arg!("-c:v"); arg!("libsvtav1"); arg!("-crf"); arg!(&o.quality.to_string()); arg!("-preset"); arg!("6"); }
-                Preset::Vp9 => { arg!("-c:v"); arg!("libvpx-vp9"); arg!("-b:v"); arg!("0"); arg!("-crf"); arg!(&o.quality.to_string()); arg!("-deadline"); arg!("good"); }
+                Preset::H264 | Preset::H265 => {
+                    arg!("-c:v"); arg!(if preset == Preset::H264 { "libx264" } else { "libx265" });
+                    arg!("-preset"); arg!(["fast", "medium", "slow"][o.encoder_speed as usize]);
+                    if bitrate { arg!("-b:v"); arg!(&format!("{}k", o.video_bitrate_kbps)); }
+                    else { arg!("-crf"); arg!(&o.quality.to_string()); }
+                }
+                Preset::Av1 => {
+                    arg!("-c:v"); arg!("libsvtav1");
+                    arg!("-preset"); arg!(["10", "6", "4"][o.encoder_speed as usize]);
+                    if bitrate { arg!("-b:v"); arg!(&format!("{}k", o.video_bitrate_kbps)); }
+                    else { arg!("-crf"); arg!(&o.quality.to_string()); }
+                }
+                Preset::Vp9 => {
+                    arg!("-c:v"); arg!("libvpx-vp9");
+                    arg!("-deadline"); arg!("good");
+                    arg!("-cpu-used"); arg!(["4", "2", "1"][o.encoder_speed as usize]);
+                    if bitrate { arg!("-b:v"); arg!(&format!("{}k", o.video_bitrate_kbps)); }
+                    else {
+                        arg!("-b:v"); arg!("0"); arg!("-crf"); arg!(&o.quality.to_string());
+                    }
+                }
                 Preset::ProRes => { arg!("-c:v"); arg!("prores_ks"); arg!("-profile:v"); arg!("3"); arg!("-pix_fmt"); arg!("yuv422p10le"); }
                 Preset::Dnxhr => { arg!("-c:v"); arg!("dnxhd"); arg!("-profile:v"); arg!("dnxhr_hq"); arg!("-pix_fmt"); arg!("yuv422p"); }
                 _ => unreachable!(),
             }
+            if bitrate && o.max_video_bitrate_kbps > 0 {
+                arg!("-maxrate"); arg!(&format!("{}k", o.max_video_bitrate_kbps));
+                arg!("-bufsize"); arg!(&format!("{}k", o.max_video_bitrate_kbps * 2));
+            }
+            if o.encoder_threads > 0 { arg!("-threads:v"); arg!(&o.encoder_threads.to_string()); }
+            if o.keyframe_interval > 0 { arg!("-g"); arg!(&o.keyframe_interval.to_string()); }
             if matches!(preset, Preset::H264 | Preset::H265) {
                 arg!("-pix_fmt"); arg!("yuv420p");
             }
@@ -250,7 +298,9 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
                 if o.audio_channels != 0 { arg!("-ac"); arg!(&o.audio_channels.to_string()); }
                 if o.audio_sample_rate != 0 { arg!("-ar"); arg!(&o.audio_sample_rate.to_string()); }
             }
-            if matches!(preset, Preset::H264 | Preset::H265) { arg!("-movflags"); arg!("+faststart"); }
+            if matches!(preset, Preset::H264 | Preset::H265) && o.faststart {
+                arg!("-movflags"); arg!("+faststart");
+            }
         }
     }
     if o.preset.report() {
@@ -447,7 +497,11 @@ fn run_job(id: u64, input: &Path, options: &EncodeOptions, tx: &Sender<Event>, c
 mod tests {
     use super::*;
     fn options(preset: Preset) -> EncodeOptions {
-        EncodeOptions { preset, quality: 23, target_width: 0, audio_bitrate_kbps: 192,
+        EncodeOptions { preset, quality: 23,
+            use_video_bitrate: false, video_bitrate_kbps: 4000,
+            max_video_bitrate_kbps: 0, encoder_speed: 1, encoder_threads: 0,
+            keyframe_interval: 0, faststart: true,
+            target_width: 0, audio_bitrate_kbps: 192,
             start_seconds: 0.0, end_seconds: 0.0, normalize_audio: false,
             hardware_encoder: HardwareEncoder::Software,
             frame_rate: 0, crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
@@ -556,6 +610,29 @@ mod tests {
         o.deinterlace = true;
         assert!(validate_options(&o).is_err());
     }
+    #[test]
+    fn bitrate_speed_and_gop_controls_generate_valid_ffmpeg_options() {
+        let input = std::env::temp_dir().join(format!("encoder-bitrate-{}.mkv", std::process::id()));
+        std::fs::write(&input, b"fixture").unwrap();
+        let mut o = options(Preset::H264);
+        o.use_video_bitrate = true; o.video_bitrate_kbps = 2400;
+        o.max_video_bitrate_kbps = 4000; o.encoder_speed = 0;
+        o.encoder_threads = 4; o.keyframe_interval = 60; o.faststart = false;
+        let args: Vec<String> = build_args(&input, &input.with_extension("mp4"), &o).unwrap()
+            .into_iter().map(|x| x.to_string_lossy().into_owned()).collect();
+        for (key, val) in [("-b:v", "2400k"), ("-maxrate", "4000k"),
+            ("-bufsize", "8000k"), ("-preset", "fast"),
+            ("-threads:v", "4"), ("-g", "60")] {
+            assert!(args.windows(2).any(|a| a[0] == key && a[1] == val), "{key}");
+        }
+        assert!(!args.iter().any(|v| v == "-crf" || v == "-movflags"));
+        o.max_video_bitrate_kbps = 100;
+        assert!(validate_options(&o).is_err());
+        o.max_video_bitrate_kbps = 0; o.video_bitrate_kbps = 0;
+        assert!(validate_options(&o).is_err());
+        std::fs::remove_file(input).unwrap();
+    }
+
     #[test]
     fn invalid_hardware_codec_rejected() {
         let mut o = options(Preset::ProRes);
