@@ -1221,6 +1221,10 @@ impl EncoderApp {
                                 self.settings.two_pass = false;
                                 changed = true;
                             }
+                            if self.settings.max_video_bitrate_kbps != 0 {
+                                self.settings.max_video_bitrate_kbps = 0;
+                                changed = true;
+                            }
                             ui.label("Constant quality (lower CRF = higher quality)");
                             changed |= ui.add(egui::Slider::new(&mut self.settings.quality, 0..=51)).changed();
                         }
@@ -1637,6 +1641,9 @@ impl EncoderApp {
 /// Clear invisible, incompatible options after preset or GPU switches.
 /// Validation in the encoding worker remains authoritative.
 fn sanitize_codec_settings(settings: &mut Settings) {
+    if !settings.use_video_bitrate {
+        settings.max_video_bitrate_kbps = 0;
+    }
     // VideoToolbox's quality slider is not mapped to a native quality mode.
     // Switch to the supported bitrate control before queueing a job.
     if matches!(settings.preset, Preset::H264 | Preset::H265)
