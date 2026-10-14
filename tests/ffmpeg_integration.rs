@@ -239,3 +239,37 @@ fn h265_two_pass_main10_rec709_signaling_is_verified() {
     }), "x265 pass statistics must be removed after completion");
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn av1_main10_pq_sequence_metadata_roundtrip() {
+    if !ffmpeg_available() { eprintln!("Skipping AV1 metadata test: FFmpeg unavailable"); return; }
+    let encoders = Command::new("ffmpeg").args(["-hide_banner", "-encoders"]).output().unwrap();
+    if !String::from_utf8_lossy(&encoders.stdout).contains("libsvtav1") {
+        eprintln!("Skipping AV1 metadata test: libsvtav1 unavailable");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("rust-encoder-av1-color-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let input = fixture(&dir);
+    let mut settings = options(Preset::Av1);
+    settings.encoder_speed = 0;
+    settings.output_bit_depth = 10;
+    settings.color_signal = rust_encoder::model::ColorSignal::Bt2020Pq;
+    let output = dir.join("tagged.mkv");
+    // The input fixture is SDR; this test checks OUTPUT METADATA ONLY, not
+    // SDR-to-HDR conversion, tone mapping or transfer/color correctness.
+    command_ok(Command::new("ffmpeg").args(encode::build_args(&input, &output, &settings).unwrap()));
+    let report = Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "v:0", "-show_entries",
+            "stream=codec_name,pix_fmt,color_primaries,color_transfer,color_space",
+            "-of", "default=noprint_wrappers=1"])
+        .arg(&output).output().unwrap();
+    assert!(report.status.success());
+    let details = String::from_utf8_lossy(&report.stdout);
+    for entry in ["codec_name=av1", "pix_fmt=yuv420p10le", "color_primaries=bt2020",
+        "color_transfer=smpte2084", "color_space=bt2020nc"] {
+        assert!(details.contains(entry), "{entry} missing from:\n{details}");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}

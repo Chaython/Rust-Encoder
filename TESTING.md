@@ -97,3 +97,5 @@ No realtime video player, synchronized waveform/editor timeline, bulk image sequ
 - Do not use only FFmpeg's generic `-pass` for x265: an apparently successful encode can produce an empty pass log.
 - libx265 uses `pass=1|2:stats=encode.stats` (in a per-job cwd), verifies the first log is nonempty, and cleans up before finalizing. Relative user source/output paths must still work.
 - A Linux FFmpeg media fixture runs the real pair and checks HEVC Main10 pixel format and Rec.709 primaries/transfer/matrix with FFprobe.
+
+- For AV1, generic `-color_primaries`/`-color_trc` alone may yield `unknown` in FFprobe. SVT-AV1 native `color-primaries`/`transfer-characteristics`/`matrix-coefficients` are required; the FFmpeg integration fixture verifies PQ tags explicitly. This test intentionally uses an SDR fixture to examine stream tags only; it does NOT prove an actual HDR signal.

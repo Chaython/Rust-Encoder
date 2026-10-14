@@ -321,6 +321,17 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
                     };
                     arg!("-x265-params");
                     arg!(&format!("colorprim={cp}:transfer={ct}:colormatrix={cm}"));
+                } else if preset == Preset::Av1 {
+                    // libsvtav1 doesn't reliably embed primaries/transfer from
+                    // generic FFmpeg color args. Set sequence header via SVT.
+                    let (cp, ct, cm) = match o.color_signal {
+                        ColorSignal::Bt709 => (1, 1, 1),
+                        ColorSignal::Bt2020Pq => (9, 16, 9),
+                        ColorSignal::Bt2020Hlg => (9, 18, 9),
+                        ColorSignal::Automatic => unreachable!(),
+                    };
+                    arg!("-svtav1-params");
+                    arg!(&format!("color-primaries={cp}:transfer-characteristics={ct}:matrix-coefficients={cm}"));
                 }
             }
             let mut video_filters: Vec<String> = Vec::new();
@@ -856,6 +867,32 @@ mod tests {
         let path = dir.0.clone();
         drop(dir);
         assert!(!path.exists());
+        std::fs::remove_file(input).unwrap();
+    }
+
+    #[test]
+    fn ten_bit_and_hdr_tags_are_explicit_and_codec_scoped() {
+        let input = std::env::temp_dir().join(format!("encoder-color-{}.mkv", std::process::id()));
+        std::fs::write(&input, b"test").unwrap();
+        let mut settings = options(Preset::Av1);
+        settings.output_bit_depth = 10;
+        settings.color_signal = ColorSignal::Bt2020Pq;
+        let result: Vec<_> = build_args(&input, &input.with_extension("mkv"), &settings)
+            .unwrap().into_iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert!(result.windows(2).any(|p| p[0] == "-pix_fmt" && p[1] == "yuv420p10le"));
+        assert!(result.windows(2).any(|p| p[0] == "-svtav1-params"
+            && p[1] == "color-primaries=9:transfer-characteristics=16:matrix-coefficients=9"));
+        settings.output_bit_depth = 8;
+        assert!(validate_options(&settings).is_err());
+        settings.output_bit_depth = 10;
+        settings.preset = Preset::H264;
+        assert!(validate_options(&settings).is_err());
+        settings.preset = Preset::H265;
+        let result = build_args(&input, &input.with_extension("mp4"), &settings).unwrap();
+        assert!(result.windows(2).any(|p| p[0] == "-x265-params"
+            && p[1] == "colorprim=9:transfer=16:colormatrix=9"));
+        settings.hardware_encoder = HardwareEncoder::Nvenc;
+        assert!(validate_options(&settings).is_err());
         std::fs::remove_file(input).unwrap();
     }
 
