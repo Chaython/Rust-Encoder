@@ -488,6 +488,35 @@ impl EncoderApp {
                     Err(e) => self.notice = format!("Unable to load profile: {e}"),
                 }
             }
+            if ui.button("Import Shutter preset…").clicked()
+                && let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Shutter Encoder preset", &["enc"])
+                    .pick_file()
+            {
+                // Import into a clean codec profile while retaining local tool,
+                // destination and desktop preferences from this installation.
+                let mut base = Settings::default();
+                base.output_dir = self.settings.output_dir.clone();
+                base.ffmpeg_path = self.settings.ffmpeg_path.clone();
+                base.ffprobe_path = self.settings.ffprobe_path.clone();
+                base.ffplay_path = self.settings.ffplay_path.clone();
+                base.dark_theme = self.settings.dark_theme;
+                base.workspace_left_fraction = self.settings.workspace_left_fraction;
+                base.workspace_right_fraction = self.settings.workspace_right_fraction;
+                match rust_encoder::shutter_preset::import_file(&path, &base) {
+                    Ok(imported) => {
+                        let applied = imported.applied.join(", ");
+                        let skipped = imported.skipped.join(", ");
+                        self.settings = imported.settings;
+                        sanitize_codec_settings(&mut self.settings);
+                        self.mark_settings_changed();
+                        self.notice = format!("Imported: {applied}. {}",
+                            if skipped.is_empty() { "Other legacy settings are not converted.".to_owned() }
+                            else { format!("Skipped: {skipped}. Other legacy settings are not converted.") });
+                    }
+                    Err(error) => self.notice = format!("Shutter preset import failed: {error}"),
+                }
+            }
             ui.separator();
             if ui.checkbox(&mut self.settings.dark_theme, "Dark theme").changed() {
                 self.mark_settings_changed();
