@@ -23,6 +23,7 @@ See [FEATURE_PARITY.md](FEATURE_PARITY.md) for a more granular list. A checked e
 - [x] Audio-only embedded playback, initial PCM prebuffer, and full-length short PCM tail handling
 - [x] Playback Pause/Resume with playhead preservation; allow audio to finish after video EOF
 - [x] Audio-clock frame staging without overwriting the next frame before presentation
+- [x] PCM sample-count playhead ignores decoder-underrun silence (output-device latency still needs calibration)
 - [ ] Verified presentation-time-aware native A/V synchronization, multi-track waveforms and multi-point editing
 - [ ] Frame-accurate cuts, EDL/XML/project interchange, retiming and merge pipelines
 - [ ] Advanced detection thresholds, offline detection, VMAF and comparative analysis

@@ -71,6 +71,7 @@ struct PcmSource {
     current: std::vec::IntoIter<f32>,
     completed: Arc<AtomicBool>,
     underruns: Arc<AtomicU64>,
+    played_samples: Arc<AtomicU64>,
 }
 
 impl Iterator for PcmSource {
@@ -78,7 +79,10 @@ impl Iterator for PcmSource {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if let Some(sample) = self.current.next() { return Some(sample); }
+            if let Some(sample) = self.current.next() {
+                self.played_samples.fetch_add(1, Ordering::Relaxed);
+                return Some(sample);
+            }
             match self.rx.try_recv() {
                 Ok(block) => self.current = block.into_iter(),
                 Err(TryRecvError::Disconnected) => return None,
@@ -110,6 +114,7 @@ pub struct NativeAudioPreview {
     stop: Arc<AtomicBool>,
     finished: Receiver<Result<(), String>>,
     underruns: Arc<AtomicU64>,
+    played_samples: Arc<AtomicU64>,
 }
 
 impl NativeAudioPreview {
@@ -130,6 +135,7 @@ impl NativeAudioPreview {
         let stop = Arc::new(AtomicBool::new(false));
         let completed = Arc::new(AtomicBool::new(false));
         let underruns = Arc::new(AtomicU64::new(0));
+        let played_samples = Arc::new(AtomicU64::new(0));
         let (tx, rx) = bounded::<Vec<f32>>(12);
         let (done_tx, finished) = bounded::<Result<(), String>>(1);
         let worker_child = Arc::clone(&child);
@@ -139,6 +145,7 @@ impl NativeAudioPreview {
         sink.append(PcmSource {
             rx, current: Vec::new().into_iter(), completed,
             underruns: Arc::clone(&underruns),
+            played_samples: Arc::clone(&played_samples),
         });
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
@@ -197,10 +204,16 @@ impl NativeAudioPreview {
                 _ => result,
             });
         });
-        Ok(Self { job_id, seek, sink, _stream: output, child, stop, finished, underruns })
+        Ok(Self { job_id, seek, sink, _stream: output, child, stop, finished, underruns, played_samples })
     }
 
-    pub fn playhead(&self) -> f64 { self.seek + self.sink.get_pos().as_secs_f64() }
+    /// Audio-master timeline based on actual emitted PCM samples. Startup
+    /// silence and underrun padding must not advance the source playhead.
+    /// Hardware output latency remains approximate.
+    pub fn playhead(&self) -> f64 {
+        self.seek + self.played_samples.load(Ordering::Relaxed) as f64
+            / f64::from(RATE * u32::from(CHANNELS))
+    }
     pub fn volume(&self) -> f32 { self.sink.volume() }
     pub fn set_volume(&self, value: f32) { self.sink.set_volume(value.clamp(0.0, 1.0)); }
     pub fn underruns(&self) -> u64 { self.underruns.load(Ordering::Relaxed) }
@@ -259,15 +272,36 @@ mod tests {
     }
 
     #[test]
+    fn pcm_clock_advances_on_real_samples_not_underrun_silence() {
+        let (tx, rx) = bounded(2);
+        let played = Arc::new(AtomicU64::new(0));
+        let mut source = PcmSource {
+            rx, current: Vec::new().into_iter(),
+            completed: Arc::new(AtomicBool::new(false)),
+            underruns: Arc::new(AtomicU64::new(0)),
+            played_samples: Arc::clone(&played),
+        };
+        assert_eq!(source.next(), Some(0.0));
+        assert_eq!(played.load(Ordering::Relaxed), 0);
+        tx.send(vec![0.25, -0.25, 0.75, -0.75]).unwrap();
+        for _ in 0..4 { assert!(source.next().is_some()); }
+        assert_eq!(played.load(Ordering::Relaxed), 4);
+        assert_eq!(source.next(), Some(0.0));
+        assert_eq!(played.load(Ordering::Relaxed), 4);
+    }
+
+    #[test]
     fn audio_callback_does_not_block_without_samples() {
         let (_tx, rx) = bounded(1);
         let mut source = PcmSource {
             rx, current: Vec::new().into_iter(),
             completed: Arc::new(AtomicBool::new(false)),
             underruns: Arc::new(AtomicU64::new(0)),
+            played_samples: Arc::new(AtomicU64::new(0)),
         };
         assert_eq!(source.next(), Some(0.0));
         assert_eq!(source.underruns.load(Ordering::Relaxed), 1);
+        assert_eq!(source.played_samples.load(Ordering::Relaxed), 0);
         source.completed.store(true, Ordering::Release);
         assert_eq!(source.next(), None);
     }

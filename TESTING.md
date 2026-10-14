@@ -32,7 +32,7 @@ No realtime video player, synchronized waveform/editor timeline, bulk image sequ
 - These are simple FFmpeg processing modes; color-managed HDR, LUTs, per-channel mixing and two-pass broadcast loudness are not implemented.
 
 ## Experimental native embedded audio playback
-- Rust tests validate FFmpeg float PCM arguments, seek/trimming and selected audio-track routing; a nonblocking audio Source test checks that the callback cannot stall waiting for FFmpeg data. Additional tests cover short final PCM blocks, malformed partial sample frames and EOF.
+- Rust tests validate FFmpeg float PCM arguments, seek/trimming and selected audio-track routing; an additional test confirms the playback clock excludes underrun silence; a nonblocking audio Source test checks that the callback cannot stall waiting for FFmpeg data. Additional tests cover short final PCM blocks, malformed partial sample frames and EOF.
 - Linux generated-media integration tests also validate FFmpeg decodes real audio into 48 kHz two-channel f32le samples. Hardware output is **not** tested in headless CI.
 - Manual testing must cover Windows WASAPI, macOS CoreAudio, Linux ALSA/Pulse/PipeWire, volume, rapid seeking, device removal, video-only files, audio-only embedded playback, PCM files shorter than the prebuffer threshold, and variable-frame-rate A/V synchronization. Specifically verify Pause/Resume across the In/Out range, and audio finishing after the last video frame. In-app synchronization remains approximate; FFplay is the fallback.
 
