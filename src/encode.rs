@@ -421,8 +421,13 @@ pub fn output_path(input: &Path, o: &EncodeOptions) -> Result<PathBuf, String> {
         let output = parent.join(format!("{root}{suffix}.{}", o.preset.extension()));
         // exists() follows symlinks, so a dangling symlink looks free even
         // though creating the output would collide with its directory entry.
-        if output != input && fs::symlink_metadata(&output).is_err() {
-            return Ok(output);
+        if output != input {
+            match fs::symlink_metadata(&output) {
+                Ok(_) => {},
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(output),
+                Err(error) => return Err(format!(
+                    "Cannot inspect output path {}: {error}", output.display())),
+            }
         }
     }
     Err("Too many output name collisions".into())
