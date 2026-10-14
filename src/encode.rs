@@ -447,7 +447,11 @@ fn temporary_output(output: &Path, id: u64) -> Result<ReservedTemp, String> {
     let stem = output.file_stem().and_then(|v| v.to_str()).unwrap_or("media");
     let ext = output.extension().and_then(|v| v.to_str()).unwrap_or("mkv");
     for n in 0..100_000 {
-        let path = parent.join(format!(".{stem}.rust-encoder-{id}-{n}.partial.{ext}"));
+        // Include the process ID so a stale reservation from an earlier
+        // application run does not block the same job ID indefinitely.
+        let path = parent.join(format!(
+            ".{stem}.rust-encoder-{}-{id}-{n}.partial.{ext}", std::process::id()
+        ));
         match fs::symlink_metadata(&path) {
             Ok(_) => continue,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -850,10 +854,12 @@ mod tests {
             "rust-encoder-temp-link-{}-{:?}", std::process::id(), std::thread::current().id()));
         fs::create_dir_all(&dir).unwrap();
         let output = dir.join("movie.mp4");
-        let occupied = dir.join(".movie.rust-encoder-818-0.partial.mp4");
+        let occupied = dir.join(format!(
+            ".movie.rust-encoder-{}-818-0.partial.mp4", std::process::id()));
         symlink(dir.join("missing-target"), &occupied).unwrap();
         let temp = temporary_output(&output, 818).unwrap();
-        assert_eq!(temp.path, dir.join(".movie.rust-encoder-818-1.partial.mp4"));
+        assert_eq!(temp.path, dir.join(format!(
+            ".movie.rust-encoder-{}-818-1.partial.mp4", std::process::id())));
         assert!(fs::symlink_metadata(&occupied).unwrap().file_type().is_symlink());
         fs::remove_dir_all(dir).unwrap();
     }
