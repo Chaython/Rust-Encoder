@@ -1097,11 +1097,40 @@ impl EncoderApp {
             .default_open(true)
             .show(ui, |ui| {
                 if self.settings.preset.video() {
-                    if !matches!(self.settings.preset, Preset::ProRes | Preset::Dnxhr) {
-                        ui.label("Quality (lower CRF = higher quality)");
-                        changed |= ui.add(egui::Slider::new(&mut self.settings.quality, 0..=51)).changed();
+                    if matches!(self.settings.preset, Preset::ProRes | Preset::Dnxhr) {
+                        ui.small("Professional editing codec: profile controls quality.");
                     } else {
-                        ui.small("This codec uses a fixed profile rather than CRF.");
+                        ui.label("Bitrate adjustment");
+                        ui.horizontal_wrapped(|ui| {
+                            changed |= ui.selectable_value(&mut self.settings.use_video_bitrate,
+                                false, "Constant quality (CRF)").changed();
+                            changed |= ui.selectable_value(&mut self.settings.use_video_bitrate,
+                                true, "Target bitrate").changed();
+                        });
+                        if self.settings.use_video_bitrate {
+                            ui.label("Target video bitrate (kb/s)");
+                            changed |= ui.add(egui::DragValue::new(&mut self.settings.video_bitrate_kbps)
+                                .range(100..=100_000).speed(50.0)).changed();
+                            ui.label("Maximum bitrate (kb/s; 0 = uncapped)");
+                            changed |= ui.add(egui::DragValue::new(&mut self.settings.max_video_bitrate_kbps)
+                                .range(0..=200_000).speed(50.0)).changed();
+                            if self.settings.max_video_bitrate_kbps > 0
+                                && self.settings.max_video_bitrate_kbps < self.settings.video_bitrate_kbps {
+                                ui.colored_label(egui::Color32::LIGHT_RED,
+                                    "Peak bitrate must be at least the target bitrate.");
+                            }
+                            if let Some(duration) = self.jobs.iter().find(|j| Some(j.id) == self.selected_job)
+                                .and_then(|j| j.media.as_ref()).and_then(|m| m.duration_sec)
+                                && duration > 0.0
+                            {
+                                let mb = duration * (self.settings.video_bitrate_kbps as f64
+                                    + self.settings.audio_bitrate_kbps as f64) / 8000.0;
+                                ui.small(format!("Estimated output size: ~{mb:.1} MB for selected source"));
+                            }
+                        } else {
+                            ui.label("Constant quality (lower CRF = higher quality)");
+                            changed |= ui.add(egui::Slider::new(&mut self.settings.quality, 0..=51)).changed();
+                        }
                     }
                     ui.label("Resize width (0 = retain source size)");
                     changed |= ui.add(egui::DragValue::new(&mut self.settings.target_width)
@@ -1112,6 +1141,37 @@ impl EncoderApp {
                     ui.small("Lossless stream copy. Video scaling and filters are unavailable.");
                 } else {
                     ui.small("Audio-only output; video streams will be excluded.");
+                }
+            });
+
+        egui::CollapsingHeader::new("Encoding speed / performance")
+            .default_open(true)
+            .show(ui, |ui| {
+                if self.settings.preset.video() {
+                    ui.label("Compression speed (software H.264 / H.265 / AV1 / VP9)");
+                    egui::ComboBox::from_id_salt("encoder-speed")
+                        .selected_text(match self.settings.encoder_speed {
+                            0 => "Fastest", 2 => "Quality / smaller files", _ => "Balanced"
+                        })
+                        .show_ui(ui, |ui| {
+                            for (speed, label) in [(0, "Fast"), (1, "Balanced"), (2, "Quality")] {
+                                changed |= ui.selectable_value(
+                                    &mut self.settings.encoder_speed, speed, label).changed();
+                            }
+                        });
+                    ui.small("Fast spends less CPU time; Quality compresses better but takes longer. Hardware acceleration has separate driver limits.");
+                    ui.label("Encoding threads (0 = automatic)");
+                    changed |= ui.add(egui::DragValue::new(&mut self.settings.encoder_threads)
+                        .range(0..=32)).changed();
+                    ui.label("Keyframe interval / GOP (0 = codec default)");
+                    changed |= ui.add(egui::DragValue::new(&mut self.settings.keyframe_interval)
+                        .range(0..=1000)).changed();
+                    if matches!(self.settings.preset, Preset::H264 | Preset::H265) {
+                        changed |= ui.checkbox(&mut self.settings.faststart,
+                            "Fast start (optimize MP4 for streaming)").changed();
+                    }
+                } else {
+                    ui.small("Only applies when video is re-encoded.");
                 }
             });
 
