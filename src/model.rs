@@ -195,6 +195,7 @@ pub struct EncodeOptions {
     pub preset: Preset,
     pub quality: u8,
     pub use_video_bitrate: bool,
+    pub two_pass: bool,
     pub video_bitrate_kbps: u32,
     pub max_video_bitrate_kbps: u32,
     pub encoder_speed: u8,
