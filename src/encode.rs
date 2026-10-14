@@ -312,6 +312,9 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
                     if o.hardware_encoder == HardwareEncoder::Nvenc {
                         // Map the shared speed setting to NVENC's actual P1-P7 presets.
                         arg!("-preset"); arg!(["p1", "p4", "p7"][o.encoder_speed as usize]);
+                    } else if o.hardware_encoder == HardwareEncoder::Amf {
+                        // Both h264_amf and hevc_amf implement these quality presets.
+                        arg!("-quality"); arg!(["speed", "balanced", "quality"][o.encoder_speed as usize]);
                     }
                     if bitrate {
                         if o.hardware_encoder == HardwareEncoder::Amf { arg!("-rc"); arg!("vbr_peak"); }
@@ -1233,6 +1236,25 @@ mod tests {
         o.use_video_bitrate = true;
         assert!(validate_options(&o).is_ok());
     }
+    #[test]
+    fn amf_speed_selector_maps_to_native_quality_presets() {
+        let dir = std::env::temp_dir().join(format!(
+            "rust-encoder-amf-speed-{}-{:?}", std::process::id(), std::thread::current().id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.mkv");
+        fs::write(&input, b"fixture").unwrap();
+        for preset in [Preset::H264, Preset::H265] {
+            for (speed, expected) in [(0, "speed"), (1, "balanced"), (2, "quality")] {
+                let mut o = options(preset);
+                o.hardware_encoder = HardwareEncoder::Amf;
+                o.encoder_speed = speed;
+                let args = build_args(&input, &dir.join("output.mp4"), &o).unwrap();
+                assert!(args.windows(2).any(|pair| pair[0] == "-quality" && pair[1] == expected));
+            }
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn nvenc_speed_selector_maps_to_native_presets() {
         let dir = std::env::temp_dir().join(format!(
