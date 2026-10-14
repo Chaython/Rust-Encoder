@@ -71,3 +71,8 @@ No realtime video player, synchronized waveform/editor timeline, bulk image sequ
 - Toggle compact queue with many source items and filter by filename; selected, running and failed jobs must keep working even when hidden by filtering.
 - Confirm switching between CRF and target bitrate does not supply conflicting FFmpeg flags; verify peak bitrate buffer and GOP/threads/speed settings in the unit tests. Test H.264 actual bitrate output through generated fixture media on Linux CI.
 - Software speed presets are codec-specific; manual benchmarking and GPU encoder validation remain necessary.
+
+## Pane sizing and queue virtualization
+- Regression tests exercise a 10,000-row filtered queue index mapping and three-pane geometry with corrupted settings, unusually narrow/large fractions and 1250–2560-pixel windows.
+- In compact mode the file queue uses egui's fixed-height show_rows API to create only visible widgets. Detailed mode retains variable-height entries for error details and output metadata.
+- Manually verify divider drag, settings persistence, Reset layout, filter changes while selecting/removing/retrying/running jobs, and preview size on high-DPI monitors.

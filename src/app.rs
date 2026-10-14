@@ -439,6 +439,11 @@ impl EncoderApp {
             if ui.checkbox(&mut self.settings.dark_theme, "Dark theme").changed() {
                 self.mark_settings_changed();
             }
+            if ui.button("Reset layout").on_hover_text("Restore default pane widths").clicked() {
+                self.settings.workspace_left_fraction = 0.21;
+                self.settings.workspace_right_fraction = 0.29;
+                self.mark_settings_changed();
+            }
         });
         ui.separator();
     }
@@ -468,48 +473,67 @@ impl EncoderApp {
 
         let mut remove_id = None;
         let mut retry_id = None;
-        // Fill the available column but allow scrolling instead of clipping long queues.
-        egui::ScrollArea::vertical()
-            .id_salt("file-queue")
-            .max_height(list_height)
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                let filter = self.queue_filter.trim().to_lowercase();
-                for job in &self.jobs {
-                    if !filter.is_empty()
-                        && !job.input.to_string_lossy().to_lowercase().contains(&filter) {
-                        continue;
-                    }
-                    if self.compact_queue {
-                        ui.horizontal(|ui| {
-                            let filename = job.input.file_name().map(|x| x.to_string_lossy())
-                                .unwrap_or_default();
-                            let label = format!("{} · {}", filename, job.status.label());
-                            if ui.selectable_label(self.selected_job == Some(job.id), label)
-                                .on_hover_text(job.input.display().to_string()).clicked() {
-                                self.selected_job = Some(job.id);
-                            }
-                            if matches!(job.status, JobState::Failed(_))
-                                && ui.small_button("↻").on_hover_text("Retry").clicked() {
-                                retry_id = Some(job.id);
-                            }
-                            if !matches!(job.status, JobState::Running | JobState::Cancelling | JobState::Analyzing)
-                                && ui.small_button("×").on_hover_text("Remove").clicked() {
-                                remove_id = Some(job.id);
-                            }
+        let filter = self.queue_filter.trim().to_lowercase();
+        let visible = matching_jobs(&self.jobs, &filter);
+        if self.jobs.is_empty() {
+            ui.vertical_centered(|ui| {
+                ui.add_space(20.0);
+                ui.label("No files added");
+                ui.small("Choose files or drop media here.");
+            });
+        } else if visible.is_empty() {
+            ui.small("No files match the filter.");
+        } else if self.compact_queue {
+            // A fixed one-line height lets egui skip allocation/painting for all
+            // off-screen jobs. The older layout constructed widgets for every file.
+            let row_height = ui.spacing().interact_size.y.max(22.0);
+            egui::ScrollArea::vertical()
+                .id_salt("file-queue-compact")
+                .max_height(list_height)
+                .auto_shrink([false, false])
+                .show_rows(ui, row_height, visible.len(), |ui, rows| {
+                    for row in rows {
+                        let job = &self.jobs[visible[row]];
+                        ui.push_id(job.id, |ui| {
+                            ui.horizontal(|ui| {
+                                let filename = job.input.file_name()
+                                    .map(|x| x.to_string_lossy()).unwrap_or_default();
+                                let selected = self.selected_job == Some(job.id);
+                                let name = format!("{} · {}", filename, job.status.label());
+                                if ui.selectable_label(selected, name)
+                                    .on_hover_text(job.input.display().to_string()).clicked() {
+                                    self.selected_job = Some(job.id);
+                                }
+                                if matches!(job.status, JobState::Running | JobState::Cancelling) {
+                                    let fraction = job.media.as_ref()
+                                        .and_then(|m| encode::expected_duration(m, &job.options))
+                                        .map(|d| (job.elapsed_sec / d).clamp(0.0, 1.0) as f32)
+                                        .unwrap_or(0.0);
+                                    ui.add(egui::ProgressBar::new(fraction).desired_width(56.0));
+                                }
+                                if matches!(job.status, JobState::Failed(_))
+                                    && ui.small_button("↻").on_hover_text("Retry").clicked() {
+                                    retry_id = Some(job.id);
+                                }
+                                if !matches!(job.status, JobState::Running | JobState::Cancelling | JobState::Analyzing)
+                                    && ui.small_button("×").on_hover_text("Remove").clicked() {
+                                    remove_id = Some(job.id);
+                                }
+                            });
                         });
-                        if matches!(job.status, JobState::Running | JobState::Cancelling) {
-                            let fraction = job.media.as_ref()
-                                .and_then(|m| encode::expected_duration(m, &job.options))
-                                .map(|d| (job.elapsed_sec / d).clamp(0.0, 1.0) as f32)
-                                .unwrap_or(0.0);
-                            ui.add(egui::ProgressBar::new(fraction)
-                                .text(format!("{} · {:.1}s", job.speed, job.elapsed_sec)));
-                        }
-                        if let JobState::Failed(error) = &job.status {
-                            ui.colored_label(egui::Color32::LIGHT_RED, error);
-                        }
-                    } else {
+                    }
+                });
+        } else {
+            // Variable-height detailed cards use normal scrolling; fixed-height
+            // virtualization would overlap progress bars and error details.
+            egui::ScrollArea::vertical()
+                .id_salt("file-queue-detailed")
+                .max_height(list_height)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for index in visible {
+                        let job = &self.jobs[index];
+                        ui.push_id(job.id, |ui| {
                     ui.group(|ui| {
                         ui.horizontal_wrapped(|ui| {
                             let filename = job.input.file_name()
@@ -552,17 +576,11 @@ impl EncoderApp {
                             });
                         }
                     });
+                            ui.add_space(4.0);
+                        });
                     }
-                    ui.add_space(if self.compact_queue { 2.0 } else { 4.0 });
-                }
-                if self.jobs.is_empty() {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(24.0);
-                        ui.label("No files added");
-                        ui.small("Choose files or drag and drop media to start.");
-                    });
-                }
-            });
+                });
+        }
         if let Some(id) = remove_id {
             self.jobs.retain(|j| j.id != id);
             if self.selected_job == Some(id) {
@@ -1466,6 +1484,39 @@ impl EncoderApp {
     }
 }
 
+/// Filter only the indices, not entire job clones; empty query avoids filename
+/// conversion. Virtual scrolling only builds UI widgets for visible indices.
+fn matching_jobs(jobs: &[Job], filter: &str) -> Vec<usize> {
+    if filter.is_empty() { return (0..jobs.len()).collect(); }
+    jobs.iter().enumerate().filter_map(|(index, job)| {
+        job.input.to_string_lossy().to_lowercase().contains(filter).then_some(index)
+    }).collect()
+}
+
+/// Fractions are persisted so the three-pane layout scales with the monitor.
+/// Clamp corrupt/legacy values and reserve a useful video preview minimum.
+fn pane_widths(total: f32, left_fraction: f32, right_fraction: f32) -> (f32, f32, f32) {
+    let usable = (total - 24.0).max(900.0);
+    let left_fraction = if left_fraction.is_finite() { left_fraction } else { 0.21 };
+    let right_fraction = if right_fraction.is_finite() { right_fraction } else { 0.29 };
+    let left = (usable * left_fraction).clamp(220.0, (usable - 675.0).min(470.0));
+    let right = (usable * right_fraction).clamp(325.0, (usable - left - 350.0).min(550.0));
+    let center = usable - left - right;
+    (left, center, right)
+}
+
+fn pane_drag_handle(ui: &mut egui::Ui, height: f32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(12.0, height), egui::Sense::drag());
+    let tint = if response.dragged() || response.hovered() {
+        ui.visuals().widgets.active.bg_fill
+    } else {
+        ui.visuals().widgets.noninteractive.bg_stroke.color
+    };
+    let track = egui::Rect::from_center_size(rect.center(), egui::vec2(3.0, height.min(68.0)));
+    ui.painter().rect_filled(track, 2.0, tint);
+    response.on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+}
+
 /// Establish an always valid playback/selection region even with legacy settings.
 fn preview_bounds(duration: f64, start: f64, end: f64) -> (f64, f64) {
     if !duration.is_finite() || duration <= 0.0 { return (0.0, 0.0); }
@@ -1494,9 +1545,9 @@ impl eframe::App for EncoderApp {
         let height = ui.available_height();
         let body_height = (height - 108.0).max(210.0);
         if width >= 1250.0 {
-            let left = (width * 0.21).clamp(245.0, 335.0);
-            let right = (width * 0.29).clamp(340.0, 455.0);
-            let center = (width - left - right - 28.0).max(360.0);
+            let (left, center, right) = pane_widths(
+                width, self.settings.workspace_left_fraction, self.settings.workspace_right_fraction
+            );
             ui.horizontal(|ui| {
                 ui.allocate_ui_with_layout(egui::vec2(left, body_height),
                     egui::Layout::top_down(egui::Align::Min), |ui| {
@@ -1504,7 +1555,15 @@ impl eframe::App for EncoderApp {
                         ui.separator();
                         self.function_ui(ui);
                     });
-                ui.separator();
+                let drag_left = pane_drag_handle(ui, body_height);
+                if drag_left.dragged() {
+                    let delta = ui.ctx().input(|input| input.pointer.delta().x);
+                    if delta != 0.0 {
+                        let new_left = (left + delta).clamp(220.0, width - right - 350.0);
+                        self.settings.workspace_left_fraction = new_left / (width - 24.0);
+                        self.mark_settings_changed();
+                    }
+                }
                 ui.allocate_ui_with_layout(egui::vec2(center, body_height),
                     egui::Layout::top_down(egui::Align::Min), |ui| {
                         egui::ScrollArea::vertical().id_salt("preview-pane")
@@ -1514,7 +1573,15 @@ impl eframe::App for EncoderApp {
                                 self.preview_ui(ui);
                             });
                     });
-                ui.separator();
+                let drag_right = pane_drag_handle(ui, body_height);
+                if drag_right.dragged() {
+                    let delta = ui.ctx().input(|input| input.pointer.delta().x);
+                    if delta != 0.0 {
+                        let new_right = (right - delta).clamp(325.0, width - left - 350.0);
+                        self.settings.workspace_right_fraction = new_right / (width - 24.0);
+                        self.mark_settings_changed();
+                    }
+                }
                 ui.allocate_ui_with_layout(egui::vec2(right, body_height),
                     egui::Layout::top_down(egui::Align::Min), |ui| {
                         egui::ScrollArea::vertical().id_salt("settings-pane")
@@ -1617,6 +1684,27 @@ mod tests {
         assert_eq!(app.jobs[1].options.preset, Preset::Flac);
         assert_eq!(app.jobs[2].options.preset, Preset::H264);
         assert_eq!(app.jobs[3].options.preset, Preset::H264);
+    }
+
+    #[test]
+    fn pane_widths_respect_minimum_preview_and_corrupt_settings() {
+        for total in [1250.0, 1600.0, 2560.0] {
+            for (a, b) in [(0.21, 0.29), (0.9, 0.95), (-10.0, 4.0), (f32::NAN, f32::INFINITY)] {
+                let (left, center, right) = pane_widths(total, a, b);
+                assert!(left >= 220.0 && right >= 325.0 && center >= 350.0);
+                assert!((left + center + right - (total - 24.0)).abs() < 0.01);
+            }
+        }
+    }
+
+    #[test]
+    fn large_queue_search_preserves_original_indices() {
+        let jobs: Vec<Job> = (0..10_000)
+            .map(|id| dummy_job(id, JobState::Queued, Preset::H264)).collect();
+        let all = matching_jobs(&jobs, "");
+        assert_eq!(all.len(), 10_000);
+        let searched = matching_jobs(&jobs, "EXAMPLE-9999.MP4");
+        assert_eq!(searched, vec![9999]);
     }
 
     #[test]

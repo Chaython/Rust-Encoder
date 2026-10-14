@@ -161,6 +161,8 @@ pub struct Settings {
     pub ffprobe_path: String,
     pub ffplay_path: String,
     pub dark_theme: bool,
+    pub workspace_left_fraction: f32,
+    pub workspace_right_fraction: f32,
 }
 
 impl Default for Settings {
@@ -182,6 +184,7 @@ impl Default for Settings {
             output_dir: String::new(),
             ffmpeg_path: String::new(), ffprobe_path: String::new(),
             ffplay_path: String::new(), dark_theme: true,
+            workspace_left_fraction: 0.21, workspace_right_fraction: 0.29,
         }
     }
 }

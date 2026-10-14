@@ -41,5 +41,7 @@ See [FEATURE_PARITY.md](FEATURE_PARITY.md) for a more granular list. A checked e
 ## Usability and performance work
 - [x] Responsive wide-screen queue / preview / options layout inspired by Shutter Encoder, plus searchable compact queues and grouped functions
 - [x] CRF or target video bitrate, peak bitrate, codec speed tiers, thread/GOP controls and faststart preference
-- [ ] Preserve visible keyboard focus and user-adjustable pane widths across sessions; measure queue performance with thousands of jobs
+- [x] Adjustable pane widths persist across launches; a reset control restores defaults
+- [x] Virtualized compact file list renders only visible rows and supports 10,000-file search regression testing
+- [ ] Measure frame rendering time and memory with thousands of actual probed files, preserve keyboard focus across pane resizing
 - [ ] True two-pass encoding, encoder capability detection, measurable speed benchmarks and a media corpus
