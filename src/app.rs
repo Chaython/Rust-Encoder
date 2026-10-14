@@ -107,11 +107,15 @@ impl EncoderApp {
         let (sender, receiver) = crossbeam_channel::unbounded();
         let (dependency_sender, dependency_receiver) = crossbeam_channel::unbounded();
         let settings = model::load_settings();
-        dependencies::start_check(
-            settings.ffmpeg_path.clone(),
-            settings.ffprobe_path.clone(),
-            dependency_sender.clone()
-        );
+        // Unit tests construct the GUI without a running desktop session.
+        // Never trigger external network installers merely by constructing a test app.
+        if !cfg!(test) {
+            dependencies::start_check(
+                settings.ffmpeg_path.clone(),
+                settings.ffprobe_path.clone(),
+                dependency_sender.clone()
+            );
+        }
         Self {
             settings,
             jobs: Vec::new(),
