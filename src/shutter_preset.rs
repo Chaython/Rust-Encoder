@@ -96,6 +96,40 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
             }
         }
     }
+    if preset.video() && !matches!(preset, Preset::ProRes | Preset::Dnxhr) {
+        if let Some(value) = get("debitVideo") {
+            if let Ok(kbps) = value.replace(' ', "").parse::<u32>() {
+                if (100..=100_000).contains(&kbps) {
+                    settings.use_video_bitrate = true;
+                    settings.video_bitrate_kbps = kbps;
+                    applied.push("Target video bitrate".into());
+                } else { skipped.push(format!("Video bitrate out of range: {value}")); }
+            } else if value != "auto" {
+                skipped.push(format!("Video bitrate mode not translated: {value}"));
+            }
+        }
+        if settings.use_video_bitrate {
+            if let Some(value) = get("maximumBitrate") {
+                if let Ok(kbps) = value.replace(' ', "").parse::<u32>() {
+                    if (settings.video_bitrate_kbps..=200_000).contains(&kbps) {
+                        settings.max_video_bitrate_kbps = kbps;
+                        applied.push("Peak video bitrate".into());
+                    } else { skipped.push(format!("Peak bitrate incompatible with target: {value}")); }
+                } else if value != "auto" {
+                    skipped.push(format!("Peak bitrate not translated: {value}"));
+                }
+            }
+        }
+        if get("case2pass") == Some("true") {
+            let supported = matches!(preset, Preset::H264 | Preset::H265 | Preset::Vp9)
+                && settings.hardware_encoder == HardwareEncoder::Software
+                && settings.use_video_bitrate;
+            if supported {
+                settings.two_pass = true;
+                applied.push("Two-pass target bitrate".into());
+            } else { skipped.push("Two-pass (unsupported with imported codec/mode)".into()); }
+        }
+    }
     if let Some(value) = get("comboAudioBitrate") {
         let digits = value.split(|c: char| !c.is_ascii_digit()).next().unwrap_or("");
         if let Ok(kbps) = digits.parse::<u16>() {
@@ -122,7 +156,6 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         settings.use_video_bitrate = false;
         settings.max_video_bitrate_kbps = 0;
     }
-    settings.two_pass = false;
     crate::encode::validate_options(&settings.encode_options())
         .map_err(|e| format!("Imported settings are incompatible: {e}"))?;
     Ok(ImportResult { settings, applied, skipped })
@@ -141,6 +174,20 @@ mod tests {
         assert_eq!(result.settings.keyframe_interval, 60);
         assert_eq!(result.settings.audio_bitrate_kbps, 192);
         assert_eq!(result.settings.output_dir, "my-output-folder");
+    }
+    #[test]
+    fn imports_numeric_bitrate_and_two_pass_from_legacy_controls() {
+        let xml = r#"<Settings>
+          <Component><Name>comboFonctions</Name><Value>H.264</Value></Component>
+          <Component><Name>debitVideo</Name><Value>5000</Value></Component>
+          <Component><Name>maximumBitrate</Name><Value>8000</Value></Component>
+          <Component><Name>case2pass</Name><Value>true</Value></Component>
+        </Settings>"#;
+        let parsed = import_xml(xml, &Settings::default()).unwrap();
+        assert!(parsed.settings.use_video_bitrate);
+        assert_eq!(parsed.settings.video_bitrate_kbps, 5000);
+        assert_eq!(parsed.settings.max_video_bitrate_kbps, 8000);
+        assert!(parsed.settings.two_pass);
     }
     #[test]
     fn refuses_unknown_function_and_entity_declaration() {
