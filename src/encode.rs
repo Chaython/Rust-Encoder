@@ -397,7 +397,9 @@ fn tag(preset: Preset) -> &'static str {
 
 /// Collision-resistant relative names. Never overwrite an existing output.
 pub fn output_path(input: &Path, o: &EncodeOptions) -> Result<PathBuf, String> {
-    let parent = o.output_dir.as_deref().or_else(|| input.parent()).ok_or("No output directory")?;
+    let parent = o.output_dir.as_deref().or_else(|| input.parent())
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     if !parent.is_dir() { return Err(format!("Output directory does not exist: {}", parent.display())); }
     let stem = input.file_stem().and_then(|v| v.to_str()).unwrap_or("media");
     let root = format!("{stem}_{}", tag(o.preset));
@@ -487,7 +489,10 @@ struct PassLogDir(PathBuf);
 
 impl PassLogDir {
     fn create(output: &Path, id: u64) -> Result<Self, String> {
-        let parent = output.parent().ok_or("No output directory for pass statistics")?;
+        let parent = output.parent()
+            .filter(|path| !path.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+        let parent = fs::canonicalize(parent)
+            .map_err(|error| format!("Cannot locate two-pass statistics parent: {error}"))?;
         for n in 0..1000 {
             let candidate = parent.join(format!(
                 ".rust-encoder-pass-{}-{}-{n}", std::process::id(), id
