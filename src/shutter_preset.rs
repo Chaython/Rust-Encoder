@@ -130,7 +130,7 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
             } else { skipped.push("Two-pass (unsupported with imported codec/mode)".into()); }
         }
     }
-    if let Some(value) = get("comboAudioBitrate") {
+    if let Some(value) = get("debitAudio").or_else(|| get("comboAudioBitrate")) {
         let digits = value.split(|c: char| !c.is_ascii_digit()).next().unwrap_or("");
         if let Ok(kbps) = digits.parse::<u16>() {
             if (32..=512).contains(&kbps) {
@@ -143,6 +143,10 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
     // it is NOT an encoding-speed preset. Never substitute a speed setting.
     if get("caseQMax") == Some("true") && preset.video() {
         skipped.push("QMax quantizer constraints (not equivalent to encoder speed)".into());
+    }
+    if get("caseForcerDesentrelacement") == Some("true") && preset.video() {
+        settings.deinterlace = true;
+        applied.push("Deinterlacing".into());
     }
     // The legacy UI contains hundreds of settings without Rust equivalents.
     // Surface untranslated enabled controls instead of pretending full parity.
@@ -189,6 +193,17 @@ mod tests {
         assert_eq!(parsed.settings.video_bitrate_kbps, 5000);
         assert_eq!(parsed.settings.max_video_bitrate_kbps, 8000);
         assert!(parsed.settings.two_pass);
+    }
+    #[test]
+    fn maps_audio_bitrate_and_deinterlacing_from_actual_legacy_controls() {
+        let xml = r#"<Settings>
+          <Component><Name>comboFonctions</Name><Value>H.264</Value></Component>
+          <Component><Name>debitAudio</Name><Value>256</Value></Component>
+          <Component><Name>caseForcerDesentrelacement</Name><Value>true</Value></Component>
+        </Settings>"#;
+        let result = import_xml(xml, &Settings::default()).unwrap();
+        assert_eq!(result.settings.audio_bitrate_kbps, 256);
+        assert!(result.settings.deinterlace);
     }
     #[test]
     fn qmax_does_not_change_encoder_speed() {
