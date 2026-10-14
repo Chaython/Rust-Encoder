@@ -1489,7 +1489,7 @@ fn matching_jobs(jobs: &[Job], filter: &str) -> Vec<usize> {
     if filter.is_empty() { return (0..jobs.len()).collect(); }
     let filter = filter.to_lowercase();
     jobs.iter().enumerate().filter_map(|(index, job)| {
-        job.input.to_string_lossy().to_lowercase().contains(filter).then_some(index)
+        job.input.to_string_lossy().to_lowercase().contains(filter.as_str()).then_some(index)
     }).collect()
 }
 
