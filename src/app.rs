@@ -1669,7 +1669,8 @@ fn sanitize_codec_settings(settings: &mut Settings) {
         settings.color_signal = ColorSignal::Automatic;
     }
     if matches!(settings.color_signal, ColorSignal::Bt2020Pq | ColorSignal::Bt2020Hlg)
-        && (!software_10 || settings.output_bit_depth != 10) {
+        && (!software_10 || !matches!(settings.preset, Preset::H265 | Preset::Av1)
+            || settings.output_bit_depth != 10) {
         settings.color_signal = ColorSignal::Automatic;
     }
     let two_pass_supported = matches!(settings.preset, Preset::H264 | Preset::H265 | Preset::Vp9)
