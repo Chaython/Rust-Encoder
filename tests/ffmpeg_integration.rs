@@ -290,8 +290,20 @@ fn vp9_ten_bit_profile_two_roundtrip() {
     settings.output_bit_depth = 10;
     settings.encoder_speed = 0;
     settings.audio_stream = -2;
-    let output = dir.join("profile2.webm");
-    command_ok(Command::new("ffmpeg").args(encode::build_args(&input, &output, &settings).unwrap()));
+    // Exercise the real queue worker, including temporary output creation,
+    // collision-safe finalization and completion signaling.
+    let (tx, rx) = crossbeam_channel::unbounded();
+    encode::start_job(9042, input, settings, tx,
+        Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+    let output = loop {
+        match rx.recv_timeout(Duration::from_secs(90)).expect("VP9 Profile 2 encode timed out") {
+            encode::Event::Completed { output, .. } => break output,
+            encode::Event::Failed { message, .. } => panic!("VP9 Profile 2 failed: {message}"),
+            encode::Event::Cancelled { .. } => panic!("VP9 Profile 2 cancelled unexpectedly"),
+            _ => {}
+        }
+    };
+    assert!(output.exists());
     let probe = Command::new("ffprobe")
         .args(["-v", "error", "-select_streams", "v:0", "-show_entries",
             "stream=codec_name,profile,pix_fmt", "-of", "default=noprint_wrappers=1"])
