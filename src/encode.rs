@@ -439,7 +439,12 @@ fn temporary_output(output: &Path, id: u64) -> Result<PathBuf, String> {
     let ext = output.extension().and_then(|v| v.to_str()).unwrap_or("mkv");
     for n in 0..100_000 {
         let path = parent.join(format!(".{stem}.rust-encoder-{id}-{n}.partial.{ext}"));
-        if !path.exists() { return Ok(path); }
+        match fs::symlink_metadata(&path) {
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(path),
+            Err(error) => return Err(format!(
+                "Cannot inspect temporary output path {}: {error}", path.display())),
+        }
     }
     Err("Cannot find unused temporary output path".into())
 }
@@ -785,6 +790,21 @@ mod tests {
         let path = output_path(&tmp.join("sample.mp4"), &o).unwrap();
         assert_ne!(path, tmp.join("sample.mp4"));
         assert_eq!(path.extension().and_then(|x| x.to_str()), Some("mp4"));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn dangling_symlink_temporary_name_is_not_reused() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!(
+            "rust-encoder-temp-link-{}-{:?}", std::process::id(), std::thread::current().id()));
+        fs::create_dir_all(&dir).unwrap();
+        let output = dir.join("movie.mp4");
+        let occupied = dir.join(".movie.rust-encoder-818-0.partial.mp4");
+        symlink(dir.join("missing-target"), &occupied).unwrap();
+        let temp = temporary_output(&output, 818).unwrap();
+        assert_eq!(temp, dir.join(".movie.rust-encoder-818-1.partial.mp4"));
+        assert!(fs::symlink_metadata(&occupied).unwrap().file_type().is_symlink());
+        fs::remove_dir_all(dir).unwrap();
     }
     #[cfg(unix)]
     #[test]
