@@ -1,0 +1,151 @@
+//! Best-effort, read-only importer for Shutter Encoder's XML .enc presets.
+//! Never execute embedded content or silently apply unsupported options.
+use crate::model::{HardwareEncoder, Preset, Settings};
+use std::{collections::HashMap, fs, path::Path};
+
+pub struct ImportResult {
+    pub settings: Settings,
+    pub applied: Vec<String>,
+    pub skipped: Vec<String>,
+}
+
+pub fn import_file(path: &Path, base: &Settings) -> Result<ImportResult, String> {
+    let metadata = fs::metadata(path).map_err(|e| format!("Cannot read preset: {e}"))?;
+    if metadata.len() > 2_000_000 { return Err("Preset exceeds 2 MB limit".into()); }
+    let xml = fs::read_to_string(path).map_err(|e| format!("Invalid preset text: {e}"))?;
+    import_xml(&xml, base)
+}
+
+pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
+    if xml.contains("<!DOCTYPE") || xml.contains("<!ENTITY") {
+        return Err("XML entity declarations are not supported".into());
+    }
+    let document = roxmltree::Document::parse(xml).map_err(|e| format!("Invalid .enc XML: {e}"))?;
+    let mut values = HashMap::new();
+    for component in document.descendants().filter(|n| n.has_tag_name("Component")) {
+        let child = |name| component.children().find(|c| c.has_tag_name(name))
+            .and_then(|c| c.text()).map(str::trim);
+        if let (Some(name), Some(value)) = (child("Name"), child("Value")) {
+            values.insert(name.to_owned(), value.to_owned());
+        }
+    }
+    if values.is_empty() { return Err("No Shutter Encoder components found".into()); }
+    let get = |key: &str| values.get(key).map(String::as_str);
+    let mut settings = base.clone();
+    let mut applied = Vec::new();
+    let mut skipped = Vec::new();
+
+    // The function must be supported; never misinterpret a different codec
+    // as H.264 merely because that happens to be the default.
+    let function = get("comboFonctions")
+        .ok_or("Preset does not contain a comboFonctions entry")?;
+    let preset = match function.trim().to_ascii_lowercase().as_str() {
+        "h.264" | "h264" => Preset::H264,
+        "h.265" | "h265" | "hevc" => Preset::H265,
+        "av1" => Preset::Av1,
+        "vp9" => Preset::Vp9,
+        "apple prores" | "prores" => Preset::ProRes,
+        "dnxhr" => Preset::Dnxhr,
+        "flac" => Preset::Flac,
+        "wav" => Preset::Wav,
+        "mp3" => Preset::Mp3,
+        "aac" => Preset::Aac,
+        "opus" => Preset::Opus,
+        _ => return Err(format!("Unsupported Shutter Encoder function: {function}")),
+    };
+    settings.preset = preset;
+    applied.push(format!("Function: {function}"));
+    // Legacy components store UI display strings. Keep only values we can
+    // confidently translate and report the remainder to the user.
+    if let Some(accel) = get("comboAccel") {
+        let lower = accel.to_ascii_lowercase();
+        let mapped = if lower.contains("nvidia") { Some(HardwareEncoder::Nvenc) }
+            else if lower.contains("amd") { Some(HardwareEncoder::Amf) }
+            else if lower.contains("intel") { Some(HardwareEncoder::Qsv) }
+            else if lower.contains("videotoolbox") { Some(HardwareEncoder::VideoToolbox) }
+            else if ["none", "aucune", "software", "cpu"].iter().any(|s| lower.contains(s)) {
+                Some(HardwareEncoder::Software)
+            } else { None };
+        if let Some(hw) = mapped {
+            if hw == HardwareEncoder::Software || hw.codec(preset).is_some() {
+                settings.hardware_encoder = hw;
+                applied.push(format!("Hardware: {accel}"));
+            } else { skipped.push(format!("Hardware {accel} is incompatible with {function}")); }
+        } else { skipped.push(format!("Unrecognized hardware choice: {accel}")); }
+    }
+    if let Some(value) = get("caseNormalizeAudio") {
+        if value == "true" && (preset.video() || preset.audio_only()) {
+            settings.normalize_audio = true;
+            applied.push("Audio normalization".into());
+        }
+    }
+    if let Some(value) = get("caseFastStart") {
+        if matches!(preset, Preset::H264 | Preset::H265) {
+            settings.faststart = value == "true";
+            applied.push("MP4 faststart".into());
+        }
+    }
+    if get("caseGOP") == Some("true") {
+        if let Some(value) = get("gopSize") {
+            match value.parse::<u16>() {
+                Ok(n) if (1..=1000).contains(&n) && preset.video() => {
+                    settings.keyframe_interval = n;
+                    applied.push("GOP length".into());
+                }
+                _ => skipped.push(format!("Unsupported GOP length: {value}")),
+            }
+        }
+    }
+    if let Some(value) = get("comboAudioBitrate") {
+        let digits = value.split(|c: char| !c.is_ascii_digit()).next().unwrap_or("");
+        if let Ok(kbps) = digits.parse::<u16>() {
+            if (32..=512).contains(&kbps) {
+                settings.audio_bitrate_kbps = kbps;
+                applied.push("Audio bitrate".into());
+            } else { skipped.push(format!("Unsupported audio bitrate: {value}")); }
+        }
+    }
+    if get("caseQMax") == Some("true") && preset.video() {
+        settings.encoder_speed = 2;
+        applied.push("Maximum quality (closest available preset)".into());
+    }
+    // The legacy UI contains hundreds of settings without Rust equivalents.
+    // Surface untranslated enabled controls instead of pretending full parity.
+    for key in ["caseEnableCrop", "caseLUTs", "caseWatermark", "caseAddTimecode"] {
+        if get(key) == Some("true") { skipped.push(format!("Unsupported legacy option: {key}")); }
+    }
+    // Prevent combinations that Rust Encoder cannot run.
+    if settings.hardware_encoder == HardwareEncoder::VideoToolbox {
+        settings.use_video_bitrate = true;
+    }
+    if matches!(preset, Preset::ProRes | Preset::Dnxhr) {
+        settings.use_video_bitrate = false;
+        settings.max_video_bitrate_kbps = 0;
+    }
+    settings.two_pass = false;
+    crate::encode::validate_options(&settings.encode_options())
+        .map_err(|e| format!("Imported settings are incompatible: {e}"))?;
+    Ok(ImportResult { settings, applied, skipped })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn imports_known_xml_components_without_overwriting_base_paths() {
+        let xml = r#"<Settings><Component><Type>JComboBox</Type><Name>comboFonctions</Name><Value>H.265</Value></Component><Component><Name>caseGOP</Name><Value>true</Value></Component><Component><Name>gopSize</Name><Value>60</Value></Component><Component><Name>comboAudioBitrate</Name><Value>192 kb/s</Value></Component></Settings>"#;
+        let mut base = Settings::default();
+        base.output_dir = "my-output-folder".into();
+        let result = import_xml(xml, &base).unwrap();
+        assert_eq!(result.settings.preset, Preset::H265);
+        assert_eq!(result.settings.keyframe_interval, 60);
+        assert_eq!(result.settings.audio_bitrate_kbps, 192);
+        assert_eq!(result.settings.output_dir, "my-output-folder");
+    }
+    #[test]
+    fn refuses_unknown_function_and_entity_declaration() {
+        let xml = "<Settings><Component><Name>comboFonctions</Name><Value>H.266</Value></Component></Settings>";
+        assert!(import_xml(xml, &Settings::default()).is_err());
+        assert!(import_xml("<!DOCTYPE a [<!ENTITY x SYSTEM 'file:///tmp/x'>]><a/>", &Settings::default()).is_err());
+    }
+}
