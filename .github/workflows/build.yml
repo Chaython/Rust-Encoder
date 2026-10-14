@@ -39,6 +39,17 @@ jobs:
         run: cargo clippy --all-targets
       - name: Build release binary
         run: cargo build --release
+      - name: Smoke-test built executable
+        shell: python
+        run: |
+          import os
+          import subprocess
+          from pathlib import Path
+          platform = os.environ['RUNNER_OS'].lower()
+          exe = Path('target/release/rust-encoder' + ('.exe' if platform == 'windows' else '')).resolve()
+          result = subprocess.run([str(exe), '--version'], check=True, capture_output=True, text=True, timeout=20)
+          print(result.stdout.strip())
+          assert result.stdout.strip() == 'Rust Encoder 0.1.0', result.stdout
       - name: Package portable binary
         shell: python
         run: |

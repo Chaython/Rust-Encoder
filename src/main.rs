@@ -1,6 +1,11 @@
 mod app;
 
 fn main() -> eframe::Result {
+    // A headless startup smoke test for packaged binaries.
+    if matches!(std::env::args().nth(1).as_deref(), Some("--version" | "-V")) {
+        println!("Rust Encoder {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Rust Encoder")
