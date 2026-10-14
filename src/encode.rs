@@ -439,7 +439,12 @@ struct ReservedTemp {
 }
 
 impl Drop for ReservedTemp {
-    fn drop(&mut self) { let _ = fs::remove_file(&self.lock); }
+    fn drop(&mut self) {
+        // A job that fails during argument preparation or FFmpeg startup may
+        // leave a partial output. Ownership is limited to this reservation.
+        let _ = fs::remove_file(&self.path);
+        let _ = fs::remove_file(&self.lock);
+    }
 }
 
 fn temporary_output(output: &Path, id: u64) -> Result<ReservedTemp, String> {
@@ -829,6 +834,23 @@ mod tests {
         let path = output_path(&tmp.join("sample.mp4"), &o).unwrap();
         assert_ne!(path, tmp.join("sample.mp4"));
         assert_eq!(path.extension().and_then(|x| x.to_str()), Some("mp4"));
+    }
+    #[test]
+    fn dropping_reservation_cleans_partial_without_touching_final_output() {
+        let dir = std::env::temp_dir().join(format!(
+            "rust-encoder-temp-drop-{}-{:?}", std::process::id(), std::thread::current().id()));
+        fs::create_dir_all(&dir).unwrap();
+        let output = dir.join("movie.mp4");
+        fs::write(&output, b"finished output").unwrap();
+        let reservation = temporary_output(&output, 301).unwrap();
+        let path = reservation.path.clone();
+        let lock = reservation.lock.clone();
+        fs::write(&path, b"incomplete encoding").unwrap();
+        drop(reservation);
+        assert!(!path.exists());
+        assert!(!lock.exists());
+        assert_eq!(fs::read(output).unwrap(), b"finished output");
+        fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn temporary_output_reservations_are_exclusive() {
