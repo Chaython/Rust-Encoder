@@ -704,10 +704,28 @@ fn run_job(
             options.preset, input.display(), diagnostics.join("\n")))
             .map_err(|error| format!("Could not save media analysis report: {error}"))?;
     }
-    finalize_output(&temp, &output)
-        .map_err(|error| format!("Could not finalize output {}: {error}; intermediate file: {}",
-            output.display(), temp.display()))?;
-    let _ = tx.send(Event::Completed { id, output });
+    // Another queued job may have claimed the chosen filename while this
+    // encode was running. Keep the original output intact and find a free
+    // suffix instead of failing an otherwise successful transcode.
+    let mut destination = output.clone();
+    let mut finalized = false;
+    for _ in 0..16 {
+        match finalize_output(&temp, &destination) {
+            Ok(()) => { finalized = true; break; }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                destination = output_path(input, options)?;
+            }
+            Err(error) => return Err(format!(
+                "Could not finalize output {}: {error}; intermediate file: {}",
+                destination.display(), temp.display())),
+        }
+    }
+    if !finalized {
+        return Err(format!(
+            "Could not find an uncontended output filename after 16 attempts; intermediate file: {}",
+            temp.display()));
+    }
+    let _ = tx.send(Event::Completed { id, output: destination });
     Ok(())
 }
 
@@ -756,6 +774,27 @@ mod tests {
         let path = output_path(&tmp.join("sample.mp4"), &o).unwrap();
         assert_ne!(path, tmp.join("sample.mp4"));
         assert_eq!(path.extension().and_then(|x| x.to_str()), Some("mp4"));
+    }
+    #[test]
+    fn output_collision_at_finalization_preserves_both_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "rust-encoder-collision-{}-{:?}", std::process::id(), std::thread::current().id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("source.mkv");
+        fs::write(&input, b"source").unwrap();
+        let mut o = options(Preset::H264);
+        o.output_dir = Some(dir.clone());
+        let initially_free = output_path(&input, &o).unwrap();
+        // Simulate a second job claiming the name during encoding.
+        fs::write(&initially_free, b"other job").unwrap();
+        let temp = temporary_output(&initially_free, 900).unwrap();
+        fs::write(&temp, b"encoded payload").unwrap();
+        let new_destination = output_path(&input, &o).unwrap();
+        finalize_output(&temp, &new_destination).unwrap();
+        assert_eq!(fs::read(&initially_free).unwrap(), b"other job");
+        assert_eq!(fs::read(&new_destination).unwrap(), b"encoded payload");
+        assert!(!temp.exists());
+        fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn existing_output_alias_cannot_replace_input() {
