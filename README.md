@@ -67,9 +67,9 @@ For identical output quality, speed settings change encoding time and compressio
 
 Use **Import Shutter preset…** in the main toolbar to select an existing Shutter Encoder `.enc` preset. These files are XML documents containing saved UI component names and values; they are **not** Rust Encoder JSON profiles. You can find Shutter Encoder's user presets in the `Documents/Shutter Encoder/Functions` directory on typical installations.
 
-Import is **best effort, not full parity**. Currently mapped: H.264, H.265, AV1, VP9, ProRes, DNxHR and several audio functions; recognized hardware choices; MP4 faststart, audio normalization, audio bitrate, GOP length, and max-quality speed intent. Unsupported functions are refused. Existing output folder, FFmpeg/FFprobe/FFplay paths, and UI preferences are preserved; active encodes are unaffected. The original `.enc` file is read-only and never rewritten. A result message lists mapped settings and known unsupported active options.
+Import is **best effort, not full parity**. Currently mapped: H.264, H.265, AV1, VP9, ProRes, DNxHR and several audio functions; recognized hardware choices; MP4 faststart, audio normalization, audio bitrate, numeric target/peak video bitrates, compatible two-pass mode, GOP length, and max-quality speed intent. Unsupported functions are refused. Existing output folder, FFmpeg/FFprobe/FFplay paths, and UI preferences are preserved; active encodes are unaffected. The original `.enc` file is read-only and never rewritten. A result message lists mapped settings and known unsupported active options.
 
-**Important:** Legacy presets can contain hundreds of options; features such as complex color filters, overlays, exact bitrate modes, trim logic, and arbitrary extra FFmpeg arguments are **not imported**. Review all settings before encoding. A successful import is not confirmation of 1:1 behavior.
+**Important:** Legacy presets can contain hundreds of options; features such as complex color filters, overlays, non-numeric bitrate modes, trim logic, and arbitrary extra FFmpeg arguments are **not imported**. Review all settings before encoding. A successful import is not confirmation of 1:1 behavior.
 
 ## Media output / presets
 
