@@ -117,11 +117,44 @@ impl HardwareEncoder {
     }
 }
 
+/// Stream metadata only: changing the tag does NOT change source color or
+/// perform HDR/SDR tone mapping. Use only on correctly graded source material.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ColorSignal {
+    #[default]
+    Automatic,
+    Bt709,
+    Bt2020Pq,
+    Bt2020Hlg,
+}
+
+impl ColorSignal {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Automatic => "Auto / source",
+            Self::Bt709 => "Rec.709 SDR metadata",
+            Self::Bt2020Pq => "BT.2020 / PQ HDR10 metadata",
+            Self::Bt2020Hlg => "BT.2020 / HLG metadata",
+        }
+    }
+
+    pub const fn ffmpeg_values(self) -> Option<(&'static str, &'static str, &'static str)> {
+        match self {
+            Self::Automatic => None,
+            Self::Bt709 => Some(("bt709", "bt709", "bt709")),
+            Self::Bt2020Pq => Some(("bt2020", "smpte2084", "bt2020nc")),
+            Self::Bt2020Hlg => Some(("bt2020", "arib-std-b67", "bt2020nc")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub preset: Preset,
     pub quality: u8,
+    pub output_bit_depth: u8, // 0 encoder default, 8 or 10
+    pub color_signal: ColorSignal,
     pub use_video_bitrate: bool,
     pub two_pass: bool,
     pub video_bitrate_kbps: u32,
@@ -170,6 +203,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             preset: Preset::H264, quality: 23,
+            output_bit_depth: 0, color_signal: ColorSignal::Automatic,
             use_video_bitrate: false, two_pass: false, video_bitrate_kbps: 4000,
             max_video_bitrate_kbps: 0, encoder_speed: 1, encoder_threads: 0,
             keyframe_interval: 0, faststart: true, target_width: 0,
@@ -237,7 +271,8 @@ impl Settings {
     pub fn encode_options(&self) -> EncodeOptions {
         EncodeOptions {
             preset: self.preset,
-            quality: self.quality, use_video_bitrate: self.use_video_bitrate,
+            quality: self.quality, output_bit_depth: self.output_bit_depth,
+            color_signal: self.color_signal, use_video_bitrate: self.use_video_bitrate,
             two_pass: self.two_pass,
             video_bitrate_kbps: self.video_bitrate_kbps,
             max_video_bitrate_kbps: self.max_video_bitrate_kbps,

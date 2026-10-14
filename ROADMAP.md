@@ -50,3 +50,6 @@ See [FEATURE_PARITY.md](FEATURE_PARITY.md) for a more granular list. A checked e
 - [ ] Extend tested two-pass support to HEVC and AV1 via encoder-specific pass handling
 
 - [x] Background hardware encoder probing with actual one-frame encoding tests for NVENC/QSV/AMF/VideoToolbox H.264/HEVC
+
+- [x] 8/10-bit software H.265/AV1 pixel format control and tagged Rec.709/BT.2020 PQ/HLG output
+- [ ] Source-aware HDR metadata propagation; HDR→SDR tone mapping and LUTs; mastering-display/MaxCLL/MaxFALL; 10-bit GPU capability verification

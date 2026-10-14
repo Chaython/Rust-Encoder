@@ -17,3 +17,5 @@ This matrix is an **acceptance-tracking document**. Existing controls are not pr
 | Packaging | CI portable ZIPs, no JVM/Electron | Bundled codecs under compliant licenses, installer, signing, notarization, application tests |
 
 Parity requires a feature-by-feature acceptance test (including negative/error paths), real input corpus and qualified cross-platform builds. Hardware/transcoding results depend on the FFmpeg build and GPU drivers.
+
+- 10-bit software HEVC Main10 and AV1 output with selectable BT.709, BT.2020 PQ or HLG color signaling (**tagging only**, not actual gamut conversion or HDR mastering/tone mapping). 8-bit/default choices remain available.

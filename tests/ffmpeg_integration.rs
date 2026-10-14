@@ -7,6 +7,7 @@ use std::{fs, path::{Path, PathBuf}, process::Command,
 fn options(preset: Preset) -> EncodeOptions {
     EncodeOptions {
         preset, quality: 25,
+        output_bit_depth: 0, color_signal: rust_encoder::model::ColorSignal::Automatic,
         use_video_bitrate: false, two_pass: false, video_bitrate_kbps: 4000,
         max_video_bitrate_kbps: 0, encoder_speed: 1, encoder_threads: 0,
         keyframe_interval: 0, faststart: true,

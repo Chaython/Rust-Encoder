@@ -1,4 +1,4 @@
-use crate::{media::MediaInfo, model::{EncodeOptions, HardwareEncoder, Preset}};
+use crate::{media::MediaInfo, model::{ColorSignal, EncodeOptions, HardwareEncoder, Preset}};
 use crossbeam_channel::Sender;
 use std::{
     collections::VecDeque, ffi::OsString, fs::{self, File, OpenOptions}, io::{BufRead, BufReader, Write},
@@ -21,6 +21,31 @@ pub enum Event {
 
 pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     if options.quality > 51 { return Err("Quality (CRF) must be between 0 and 51".into()); }
+    if !matches!(options.output_bit_depth, 0 | 8 | 10) {
+        return Err("Output bit depth must be Auto, 8-bit or 10-bit".into());
+    }
+    if options.output_bit_depth > 0 && !matches!(options.preset,
+        Preset::H264 | Preset::H265 | Preset::Av1 | Preset::Vp9) {
+        return Err("Explicit bit depth is only available for H.264, H.265, AV1 and VP9".into());
+    }
+    if options.output_bit_depth == 10 && (
+        !matches!(options.preset, Preset::H265 | Preset::Av1)
+        || options.hardware_encoder != HardwareEncoder::Software
+    ) {
+        return Err("10-bit output currently requires software HEVC or AV1 encoding".into());
+    }
+    if options.color_signal != ColorSignal::Automatic {
+        if !matches!(options.preset, Preset::H264 | Preset::H265 | Preset::Av1 | Preset::Vp9) {
+            return Err("Color signaling requires a video encoding preset".into());
+        }
+        if matches!(options.color_signal, ColorSignal::Bt2020Pq | ColorSignal::Bt2020Hlg)
+            && (options.output_bit_depth != 10
+                || !matches!(options.preset, Preset::H265 | Preset::Av1)
+                || options.hardware_encoder != HardwareEncoder::Software)
+        {
+            return Err("HDR PQ/HLG tags require software H.265 or AV1 with 10-bit output; signaling does not convert SDR to HDR".into());
+        }
+    }
     if options.encoder_speed > 2 { return Err("Encoder speed must be 0–2".into()); }
     if options.two_pass {
         if !options.use_video_bitrate {
@@ -273,8 +298,30 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
             }
             if o.encoder_threads > 0 { arg!("-threads:v"); arg!(&o.encoder_threads.to_string()); }
             if o.keyframe_interval > 0 { arg!("-g"); arg!(&o.keyframe_interval.to_string()); }
-            if matches!(preset, Preset::H264 | Preset::H265) {
+            // Video encoders can otherwise silently fall back to 8-bit output.
+            // Professional ProRes already uses a fixed 10-bit 4:2:2 format.
+            if o.output_bit_depth == 10 {
+                arg!("-pix_fmt"); arg!("yuv420p10le");
+            } else if o.output_bit_depth == 8 || matches!(preset, Preset::H264 | Preset::H265) {
                 arg!("-pix_fmt"); arg!("yuv420p");
+            }
+            if let Some((primaries, trc, matrix)) = o.color_signal.ffmpeg_values() {
+                arg!("-color_primaries"); arg!(primaries);
+                arg!("-color_trc"); arg!(trc);
+                arg!("-colorspace"); arg!(matrix);
+                if preset == Preset::H265
+                    && o.hardware_encoder == HardwareEncoder::Software {
+                    // libx265 requires matching bitstream VUI as well as FFmpeg
+                    // stream fields. Otherwise FFprobe may report unknown tags.
+                    let (cp, ct, cm) = match o.color_signal {
+                        ColorSignal::Bt709 => (1, 1, 1),
+                        ColorSignal::Bt2020Pq => (9, 16, 9),
+                        ColorSignal::Bt2020Hlg => (9, 18, 9),
+                        ColorSignal::Automatic => unreachable!(),
+                    };
+                    arg!("-x265-params");
+                    arg!(&format!("colorprim={cp}:transfer={ct}:colormatrix={cm}"));
+                }
             }
             let mut video_filters: Vec<String> = Vec::new();
             if o.deinterlace { video_filters.push("yadif=mode=send_frame:parity=auto:deint=all".into()); }
@@ -604,6 +651,7 @@ mod tests {
     use super::*;
     fn options(preset: Preset) -> EncodeOptions {
         EncodeOptions { preset, quality: 23,
+            output_bit_depth: 0, color_signal: ColorSignal::Automatic,
             use_video_bitrate: false, two_pass: false, video_bitrate_kbps: 4000,
             max_video_bitrate_kbps: 0, encoder_speed: 1, encoder_threads: 0,
             keyframe_interval: 0, faststart: true,

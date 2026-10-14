@@ -3,7 +3,7 @@ use eframe::egui;
 use rust_encoder::{
     encode::{self, Event},
     media::{self, MediaInfo},
-    model::{self, EncodeOptions, HardwareEncoder, Preset, Settings},
+    model::{self, ColorSignal, EncodeOptions, HardwareEncoder, Preset, Settings},
     player::{self, PlaybackSession},
     preview_stream::{self, NativeVideoPreview},
     audio_preview::NativeAudioPreview,
@@ -1218,6 +1218,47 @@ impl EncoderApp {
                             ui.label("Constant quality (lower CRF = higher quality)");
                             changed |= ui.add(egui::Slider::new(&mut self.settings.quality, 0..=51)).changed();
                         }
+                    }
+                    if matches!(self.settings.preset, Preset::H264 | Preset::H265 | Preset::Av1 | Preset::Vp9) {
+                        ui.separator();
+                        ui.label("Output precision / pixel depth");
+                        egui::ComboBox::from_id_salt("output-depth")
+                            .selected_text(match self.settings.output_bit_depth {
+                                8 => "8-bit 4:2:0", 10 => "10-bit 4:2:0", _ => "Encoder default"
+                            })
+                            .show_ui(ui, |ui| {
+                                changed |= ui.selectable_value(&mut self.settings.output_bit_depth,
+                                    0, "Encoder default").changed();
+                                changed |= ui.selectable_value(&mut self.settings.output_bit_depth,
+                                    8, "8-bit 4:2:0").changed();
+                                if matches!(self.settings.preset, Preset::H265 | Preset::Av1)
+                                    && self.settings.hardware_encoder == HardwareEncoder::Software {
+                                    changed |= ui.selectable_value(&mut self.settings.output_bit_depth,
+                                        10, "10-bit 4:2:0 (Main10)").changed();
+                                }
+                            });
+                        ui.label("Color metadata / signal");
+                        egui::ComboBox::from_id_salt("output-color-signal")
+                            .selected_text(self.settings.color_signal.label())
+                            .show_ui(ui, |ui| {
+                                for (signal, name) in [
+                                    (ColorSignal::Automatic, "Automatic / source defaults"),
+                                    (ColorSignal::Bt709, "Rec.709 SDR (tags only)"),
+                                    (ColorSignal::Bt2020Pq, "BT.2020 PQ / HDR10 (tags only)"),
+                                    (ColorSignal::Bt2020Hlg, "BT.2020 HLG (tags only)"),
+                                ] {
+                                    let allowed = !matches!(signal, ColorSignal::Bt2020Pq | ColorSignal::Bt2020Hlg)
+                                        || (self.settings.output_bit_depth == 10
+                                            && matches!(self.settings.preset, Preset::H265 | Preset::Av1)
+                                            && self.settings.hardware_encoder == HardwareEncoder::Software);
+                                    changed |= ui.add_enabled(allowed,
+                                        egui::Button::selectable(self.settings.color_signal == signal, name)
+                                    ).clicked().then(|| self.settings.color_signal = signal).is_some();
+                                }
+                            });
+                        ui.small("Metadata is NOT a color transform. PQ/HLG tags are ONLY for footage already graded in that transfer; SDR footage will not become HDR. No tonemapping.");
+                    } else {
+                        ui.small("ProRes and DNxHR use their codec-specific fixed pixel formats.");
                     }
                     ui.label("Resize width (0 = retain source size)");
                     changed |= ui.add(egui::DragValue::new(&mut self.settings.target_width)
