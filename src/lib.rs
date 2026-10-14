@@ -3,3 +3,4 @@
 pub mod encode;
 pub mod media;
 pub mod model;
+pub mod player;

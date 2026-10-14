@@ -152,6 +152,7 @@ pub struct Settings {
     pub output_dir: String,
     pub ffmpeg_path: String,
     pub ffprobe_path: String,
+    pub ffplay_path: String,
     pub dark_theme: bool,
 }
 
@@ -169,7 +170,8 @@ impl Default for Settings {
             brightness: 0.0, contrast: 1.0, saturation: 1.0, gamma: 1.0,
             audio_channels: 0, audio_sample_rate: 0, audio_gain_db: 0.0,
             output_dir: String::new(),
-            ffmpeg_path: String::new(), ffprobe_path: String::new(), dark_theme: true,
+            ffmpeg_path: String::new(), ffprobe_path: String::new(),
+            ffplay_path: String::new(), dark_theme: true,
         }
     }
 }

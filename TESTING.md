@@ -31,6 +31,11 @@ No realtime video player, synchronized waveform/editor timeline, bulk image sequ
 - The Linux generated-media integration test now exercises YADIF, HQDN3D, unsharp and `eq` filters with H.264, including mono/48 kHz conversion and audio gain; FLAC additionally verifies resampling and gain.
 - These are simple FFmpeg processing modes; color-managed HDR, LUTs, per-channel mixing and two-pass broadcast loudness are not implemented.
 
+## Optional synchronized A/V companion preview
+- Pure Rust tests validate FFplay command arguments for Unicode/shell-metacharacter filenames, fractional seek and Out bounds, invalid/NaN times, no overwrite or shell invocation, and settings migration.
+- Manual testing must verify FFplay actually opens and plays with sound on Windows/Linux/macOS, that separate windows exit on Stop, selection changes or application shutdown, and that missing FFplay is reported without freezing the GUI.
+- FFplay is **not bundled** in CI ZIPs. This opens a separate synchronized playback window; the embedded Rust egui preview is still sampled and silent. CI compilation and argument tests do not test a live audio device or FFplay UI.
+
 ## Sampled preview and trim timeline
 
 - Media integration tests create mixed video/audio FFmpeg fixtures, probe the source frame rate, extract a seeked frame and generate/parse the 900×120 waveform PNG.

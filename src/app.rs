@@ -4,6 +4,7 @@ use rust_encoder::{
     encode::{self, Event},
     media::{self, MediaInfo},
     model::{self, EncodeOptions, HardwareEncoder, Preset, Settings},
+    player::{self, PlaybackSession},
 };
 use std::{
     path::PathBuf,
@@ -69,6 +70,7 @@ pub struct EncoderApp {
     preview_for: Option<(u64, u64)>,
     preview_loading: bool,
     preview_playing: bool,
+    av_player: Option<PlaybackSession>,
     preview_last_tick: Instant,
     waveform_for: Option<u64>,
     waveform_pixels: Option<media::Thumbnail>,
@@ -99,6 +101,7 @@ impl EncoderApp {
             preview_for: None,
             preview_loading: false,
             preview_playing: false,
+            av_player: None,
             preview_last_tick: Instant::now(),
             waveform_for: None,
             waveform_pixels: None,
@@ -426,6 +429,7 @@ impl EncoderApp {
             self.preview_for = None;
             self.preview_loading = false;
             self.preview_playing = false;
+            self.av_player = None;
             self.preview_pixels = None;
             self.preview_texture = None;
             self.preview_error = None;
@@ -461,6 +465,45 @@ impl EncoderApp {
             model::resolve_tool("ffmpeg", &self.settings.ffmpeg_path),
             job.input.clone(), self.sender.clone(),
         );
+    }
+
+    fn refresh_av_player(&mut self) {
+        let mut finished = false;
+        if let Some(player) = self.av_player.as_mut() {
+            if self.selected_job != Some(player.job_id)
+                || !self.jobs.iter().any(|job| job.id == player.job_id) {
+                finished = true;
+            } else {
+                match player.try_wait() {
+                    Ok(Some(status)) => {
+                        if !status.success() {
+                            self.notice = format!("FFplay closed ({status}). Verify FFplay and media compatibility.");
+                        }
+                        finished = true;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        self.notice = format!("Cannot check FFplay process: {error}");
+                        finished = true;
+                    }
+                }
+            }
+        }
+        if finished { self.av_player = None; }
+    }
+
+    fn launch_av_preview(&mut self, job_id: u64, input: PathBuf,
+                         position: f64, stop: Option<f64>) {
+        self.av_player = None;
+        self.preview_playing = false;
+        let binary = player::resolve_ffplay(&self.settings);
+        match PlaybackSession::launch(job_id, &binary, &input, position, stop) {
+            Ok(session) => {
+                self.av_player = Some(session);
+                self.notice.clear();
+            }
+            Err(error) => self.notice = error,
+        }
     }
 
     fn tick_playback(&mut self) {
@@ -525,6 +568,33 @@ impl EncoderApp {
             .and_then(|j| j.media.as_ref()).cloned();
         if let Some(info) = selected {
             ui.small(info.summary());
+            // Use FFplay's native synchronized A/V renderer in a companion window.
+            // The egui timeline remains a low-cost, silent sampled preview.
+            ui.horizontal_wrapped(|ui| {
+                let running = self.av_player.as_ref().is_some_and(|p| p.job_id == self.selected_job.unwrap_or(0));
+                let title = if running { "▶ Restart A/V at playhead" }
+                    else { "▶ Play A/V (FFplay window)" };
+                if ui.button(title).clicked()
+                    && let Some(job) = self.jobs.iter().find(|j| Some(j.id) == self.selected_job)
+                {
+                    let end = info.duration_sec.map(|duration| {
+                        preview_bounds(duration, self.settings.start_seconds, self.settings.end_seconds)
+                    });
+                    let position = end.map(|(start, finish)| {
+                        if self.preview_seconds < start || self.preview_seconds >= finish {
+                            start
+                        } else {
+                            self.preview_seconds
+                        }
+                    }).unwrap_or(self.preview_seconds.max(0.0));
+                    let stop = end.map(|(_, finish)| finish);
+                    self.launch_av_preview(job.id, job.input.clone(), position, stop);
+                }
+                if ui.add_enabled(running, egui::Button::new("■ Stop A/V")).clicked() {
+                    self.av_player = None;
+                }
+            });
+            ui.small("FFplay opens a separate synchronized audio/video player. Space pauses there, arrows seek; close it or Stop A/V to exit.");
             if let Some(texture) = &self.waveform_texture {
                 let size = egui::vec2(ui.available_width().max(100.0), 64.0);
                 ui.image((texture.id(), size));
@@ -631,7 +701,7 @@ impl EncoderApp {
                 }
             });
         }
-        ui.small("Playback samples silent video frames (up to 4 FPS). Synchronized audio playback, wave editing and multi-cut EDL remain unported.");
+        ui.small("The built-in timeline still samples silent frames (up to 4 FPS). FFplay provides synchronized A/V in a separate window; native embedded playback, wave editing and multi-cut EDL remain unported.");
     }
 
     fn options_ui(&mut self, ui: &mut egui::Ui) {
@@ -932,6 +1002,10 @@ impl EncoderApp {
                 ui.label("FFprobe executable");
                 changed |= ui.add(egui::TextEdit::singleline(&mut self.settings.ffprobe_path)
                     .desired_width(ui.available_width())).changed();
+                ui.label("FFplay executable (optional for synchronized A/V playback)");
+                changed |= ui.add(egui::TextEdit::singleline(&mut self.settings.ffplay_path)
+                    .desired_width(ui.available_width())).changed();
+                ui.small("An empty FFplay path checks beside the configured FFmpeg, beside this app, then PATH.");
             });
 
         ui.separator();
@@ -992,6 +1066,7 @@ impl eframe::App for EncoderApp {
     // eframe 0.36 uses `App::ui` for the native root viewport.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_events();
+        self.refresh_av_player();
         let dropped_files: Vec<PathBuf> = ui.ctx().input(|input| input.raw.dropped_files.iter()
             .map(|file| file.path().to_path_buf()).collect());
         if !dropped_files.is_empty() { self.add_files(dropped_files); }
@@ -1042,7 +1117,7 @@ impl eframe::App for EncoderApp {
         self.save_when_idle(ui.ctx());
         if self.current.is_some()
             || self.jobs.iter().any(|j| matches!(j.status, JobState::Analyzing))
-            || self.preview_loading || self.preview_playing
+            || self.preview_loading || self.preview_playing || self.av_player.is_some()
         {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
         }
@@ -1051,6 +1126,8 @@ impl eframe::App for EncoderApp {
 
 impl Drop for EncoderApp {
     fn drop(&mut self) {
+        // Drop the managed FFplay child before releasing encoder state.
+        self.av_player = None;
         if self.dirty_since.is_some() {
             let _ = model::save_settings(&self.settings);
         }

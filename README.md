@@ -18,7 +18,7 @@ Rust-native desktop media converter and batch processing tool built with **egui/
 
 ## Dependencies
 
-Rust 1.95+ (build only); FFmpeg and FFprobe **are not included** in the portable archives. Put them in PATH, beside the binary, or configure paths under *External tools*. A codec can only be used if present in that FFmpeg build. Consult FFmpeg/codec licensing before redistributing binaries.
+Rust 1.95+ (build only); FFmpeg, FFprobe and optional FFplay **are not included** in the portable archives. Put them in PATH, beside the binary, or configure paths under *External tools*. A codec can only be used if present in that FFmpeg build. Consult FFmpeg/codec licensing before redistributing binaries.
 
 ## Build and test
 
@@ -58,4 +58,5 @@ Rust Encoder source is GPL-3.0-or-later; see [LICENSE](LICENSE). It is not affil
 - Click or drag the timeline to seek a source file. Step forward/back by the probed frame duration; playback previews up to 4 silent still frames per second, decoded asynchronously via FFmpeg.
 - Mark In, Mark Out or clear the selection directly on the timeline. Marks update shared trim settings for all queued jobs; running jobs do not change. Stream-copy cuts remain keyframe-inexact.
 - An FFmpeg `showwavespic` waveform of the first audio stream appears under the preview. Waveform generation runs off the GUI thread and can take time for long media.
-- This is **not** synchronized audio/video playback, a multitrack waveform editor or frame-accurate editing. These remain future milestones.
+- **Synchronized audio/video preview:** use **Play A/V (FFplay window)** from the timeline. Rust Encoder discovers FFplay beside the configured FFmpeg, beside the application, or in PATH; an explicit FFplay path can also be set under **External tools**. The external player starts at the timeline playhead and stops at the selected Out point, and is stopped when changing files or closing Rust Encoder. Playback controls within the FFplay window remain separate from the egui timeline.
+- The built-in preview still renders silent sampled frames, not embedded synchronized audio/video playback. A multitrack waveform editor, native embedded player and frame-accurate editing remain future milestones.
