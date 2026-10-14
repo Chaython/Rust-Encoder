@@ -192,3 +192,50 @@ fn h264_two_pass_produces_valid_file_and_cleans_logs() {
     }));
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn h265_two_pass_main10_rec709_signaling_is_verified() {
+    if !ffmpeg_available() { eprintln!("Skipping HEVC test; FFmpeg missing"); return; }
+    let encoders = Command::new("ffmpeg").args(["-hide_banner", "-encoders"]).output().unwrap();
+    if !String::from_utf8_lossy(&encoders.stdout).contains("libx265") {
+        eprintln!("Skipping HEVC test; libx265 unavailable");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("rust-encoder-hevc-main10-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let input = fixture(&dir);
+    let mut o = options(Preset::H265);
+    o.two_pass = true;
+    o.use_video_bitrate = true;
+    o.video_bitrate_kbps = 500;
+    o.encoder_speed = 0;
+    o.output_bit_depth = 10;
+    o.color_signal = rust_encoder::model::ColorSignal::Bt709;
+    let (tx, rx) = crossbeam_channel::unbounded();
+    encode::start_job(842, input, o, tx,
+        Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+    let output = loop {
+        match rx.recv_timeout(Duration::from_secs(75)).expect("HEVC two-pass encode timed out") {
+            encode::Event::Completed { output, .. } => break output,
+            encode::Event::Failed { message, .. } => panic!("HEVC two-pass failed: {message}"),
+            encode::Event::Cancelled { .. } => panic!("Unexpected HEVC cancellation"),
+            _ => {}
+        }
+    };
+    let probe = Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "v:0", "-show_entries",
+            "stream=codec_name,pix_fmt,color_primaries,color_transfer,color_space",
+            "-of", "default=noprint_wrappers=1"])
+        .arg(&output).output().unwrap();
+    assert!(probe.status.success(), "FFprobe failed");
+    let metadata = String::from_utf8_lossy(&probe.stdout);
+    for field in ["codec_name=hevc", "pix_fmt=yuv420p10le",
+                  "color_primaries=bt709", "color_transfer=bt709", "color_space=bt709"] {
+        assert!(metadata.contains(field), "Expected {field}:\n{metadata}");
+    }
+    assert!(!fs::read_dir(&dir).unwrap().any(|entry| {
+        entry.unwrap().file_name().to_string_lossy().starts_with(".rust-encoder-pass-")
+    }), "x265 pass statistics must be removed after completion");
+    fs::remove_dir_all(dir).unwrap();
+}
