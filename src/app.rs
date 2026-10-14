@@ -1289,7 +1289,15 @@ impl EncoderApp {
             .default_open(true)
             .show(ui, |ui| {
                 if self.settings.preset.video() {
-                    ui.label("Compression speed (software H.264 / H.265 / AV1 / VP9)");
+                    if self.settings.hardware_encoder == HardwareEncoder::Nvenc {
+                        ui.label("NVENC preset (Fast P1 / Balanced P4 / Quality P7)");
+                    } else if self.settings.hardware_encoder == HardwareEncoder::Software {
+                        ui.label("Software compression speed");
+                    } else {
+                        ui.label("Compression speed (not mapped for this hardware encoder)");
+                    }
+                    ui.add_enabled_ui(self.settings.hardware_encoder == HardwareEncoder::Software
+                        || self.settings.hardware_encoder == HardwareEncoder::Nvenc, |ui| {
                     egui::ComboBox::from_id_salt("encoder-speed")
                         .selected_text(match self.settings.encoder_speed {
                             0 => "Fastest", 2 => "Quality / smaller files", _ => "Balanced"
@@ -1300,7 +1308,8 @@ impl EncoderApp {
                                     &mut self.settings.encoder_speed, speed, label).changed();
                             }
                         });
-                    ui.small("Fast spends less CPU time; Quality compresses better but takes longer. Hardware acceleration has separate driver limits.");
+                    });
+                    ui.small("Higher quality presets may take longer; compression efficiency depends on the codec and GPU.");
                     ui.label("Encoding threads (0 = automatic)");
                     changed |= ui.add(egui::DragValue::new(&mut self.settings.encoder_threads)
                         .range(0..=32)).changed();
