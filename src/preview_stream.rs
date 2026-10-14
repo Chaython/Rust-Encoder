@@ -72,6 +72,34 @@ pub fn decode_args(input: &Path, start: f64, end: Option<f64>) -> Result<Vec<OsS
     Ok(args)
 }
 
+/// Consume only frames that have reached the audio playback clock. Keep the
+/// earliest future frame pending, rather than replacing it with newer frames.
+pub fn frame_at_clock(
+    frames: &Receiver<StreamFrame>,
+    held: &mut Option<StreamFrame>,
+    deadline: Option<f64>,
+) -> Option<StreamFrame> {
+    let ready = |position: f64| deadline.is_none_or(|limit| position <= limit);
+    let mut newest = None;
+    if let Some(pending) = held.take() {
+        if ready(pending.position) {
+            newest = Some(pending);
+        } else {
+            *held = Some(pending);
+            return None;
+        }
+    }
+    while let Ok(frame) = frames.try_recv() {
+        if ready(frame.position) {
+            newest = Some(frame);
+        } else {
+            *held = Some(frame);
+            break;
+        }
+    }
+    newest
+}
+
 impl NativeVideoPreview {
     pub fn launch(job_id: u64, ffmpeg: &Path, input: &Path,
                   start: f64, end: Option<f64>) -> Result<Self, String> {
@@ -152,6 +180,8 @@ impl NativeVideoPreview {
         newest
     }
 
+    pub fn frames(&self) -> &Receiver<StreamFrame> { &self.frames }
+
     pub fn try_finished(&self) -> Option<Result<(), String>> {
         match self.finished.try_recv() {
             Ok(done) => Some(done),
@@ -191,6 +221,31 @@ mod tests {
         assert!(args.iter().any(|a| a.to_string_lossy().contains("pad=640:360")));
         assert_eq!(args.last().unwrap(), "pipe:1");
         std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn clock_holds_first_future_frame_until_due() {
+        let (tx, rx) = bounded(4);
+        for position in [0.0, 0.1, 0.2, 0.3] {
+            tx.send(StreamFrame { rgba: vec![], position }).unwrap();
+        }
+        let mut held = None;
+        assert_eq!(frame_at_clock(&rx, &mut held, Some(0.05)).unwrap().position, 0.0);
+        assert_eq!(held.as_ref().unwrap().position, 0.1);
+        assert!(frame_at_clock(&rx, &mut held, Some(0.05)).is_none());
+        assert_eq!(held.as_ref().unwrap().position, 0.1);
+        assert_eq!(frame_at_clock(&rx, &mut held, Some(0.25)).unwrap().position, 0.2);
+        assert_eq!(held.as_ref().unwrap().position, 0.3);
+        assert_eq!(frame_at_clock(&rx, &mut held, Some(0.35)).unwrap().position, 0.3);
+        assert!(held.is_none());
+    }
+
+    #[test]
+    fn clock_free_mode_drains_to_newest_frame() {
+        let (tx, rx) = bounded(2);
+        tx.send(StreamFrame { rgba: vec![], position: 1.0 }).unwrap();
+        tx.send(StreamFrame { rgba: vec![], position: 1.1 }).unwrap();
+        assert_eq!(frame_at_clock(&rx, &mut None, None).unwrap().position, 1.1);
     }
 
     #[test]

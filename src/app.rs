@@ -75,6 +75,7 @@ pub struct EncoderApp {
     av_player: Option<PlaybackSession>,
     native_video: Option<NativeVideoPreview>,
     native_audio: Option<NativeAudioPreview>,
+    native_paused_job: Option<u64>,
     native_error: Option<String>,
     native_audio_error: Option<String>,
     native_held_frame: Option<preview_stream::StreamFrame>,
@@ -112,6 +113,7 @@ impl EncoderApp {
             av_player: None,
             native_video: None,
             native_audio: None,
+            native_paused_job: None,
             native_error: None,
             native_audio_error: None,
             native_held_frame: None,
@@ -446,6 +448,7 @@ impl EncoderApp {
             self.av_player = None;
             self.native_video = None;
             self.native_audio = None;
+            self.native_paused_job = None;
             self.native_held_frame = None;
             self.native_error = None;
             self.native_audio_error = None;
@@ -473,7 +476,7 @@ impl EncoderApp {
                     job.input.clone(), self.sender.clone());
             }
         }
-        if info.video_codec.is_none() || self.native_video.is_some() { return; }
+        if info.video_codec.is_none() || self.native_video.is_some() || self.native_audio.is_some() { return; }
         let seek_ms = (self.preview_requested_seconds.max(0.0) * 1000.0).round() as u64;
         if self.preview_loading || self.preview_for == Some((id, seek_ms)) { return; }
         self.preview_for = Some((id, seek_ms));
@@ -490,9 +493,25 @@ impl EncoderApp {
         self.native_audio = None;
         self.native_held_frame = None;
         self.native_video = None;
+        self.native_paused_job = None;
         self.preview_for = None;
         self.preview_loading = false;
         self.preview_requested_seconds = self.preview_seconds;
+    }
+
+    /// Pause at the output audio clock, preserving the playhead for resume.
+    /// We restart FFmpeg on resume rather than freezing an OS decoder process.
+    fn pause_native_video(&mut self) {
+        let id = self.native_video.as_ref().map(|stream| stream.job_id)
+            .or_else(|| self.native_audio.as_ref().map(|audio| audio.job_id));
+        if let Some(audio) = self.native_audio.as_ref() {
+            let timestamp = audio.playhead();
+            if timestamp.is_finite() {
+                self.preview_seconds = timestamp.max(0.0);
+            }
+        }
+        self.stop_native_video();
+        self.native_paused_job = id;
     }
 
     fn launch_native_video(&mut self, job_id: u64, input: PathBuf,
@@ -551,40 +570,46 @@ impl EncoderApp {
         }
         let clock = self.native_audio.as_ref().map(NativeAudioPreview::playhead);
         if self.native_video.is_none() && let Some(time) = clock {
-            // Audio-only files drive the playhead from the output clock.
+            // Audio-only files and audio tails continue advancing the playhead.
             self.preview_seconds = time;
             self.preview_requested_seconds = time;
             ctx.request_repaint();
         }
         let mut ended = None;
         if let Some(stream) = self.native_video.as_ref() {
-            let mut frame = self.native_held_frame.take();
-            if let Some(recent) = stream.newest_frame() { frame = Some(recent); }
+            // Hold the FIRST early frame instead of overwriting it with newer
+            // early frames at every UI tick. That previously caused starvation.
+            let frame = preview_stream::frame_at_clock(
+                stream.frames(), &mut self.native_held_frame, clock.map(|t| t + 0.065)
+            );
             if let Some(frame) = frame {
-                if clock.is_some_and(|time| frame.position > time + 0.065) {
-                    // Keep one early frame until the audio output clock catches up.
-                    self.native_held_frame = Some(frame);
+                let image = egui::ColorImage::from_rgba_unmultiplied(
+                    [preview_stream::WIDTH, preview_stream::HEIGHT], &frame.rgba
+                );
+                if let Some(texture) = self.preview_texture.as_mut() {
+                    texture.set(image, egui::TextureOptions::LINEAR);
                 } else {
-                    let image = egui::ColorImage::from_rgba_unmultiplied(
-                        [preview_stream::WIDTH, preview_stream::HEIGHT], &frame.rgba
-                    );
-                    if let Some(texture) = self.preview_texture.as_mut() {
-                        texture.set(image, egui::TextureOptions::LINEAR);
-                    } else {
-                        self.preview_texture = Some(ctx.load_texture(
-                            "native-stream-frame", image, egui::TextureOptions::LINEAR
-                        ));
-                    }
-                    self.preview_seconds = frame.position;
-                    self.preview_requested_seconds = frame.position;
-                    ctx.request_repaint();
+                    self.preview_texture = Some(ctx.load_texture(
+                        "native-stream-frame", image, egui::TextureOptions::LINEAR
+                    ));
                 }
+                self.preview_seconds = frame.position;
+                self.preview_requested_seconds = frame.position;
+                ctx.request_repaint();
             }
             ended = stream.try_finished();
         }
         if let Some(result) = ended {
-            self.stop_native_video();
+            // Video can finish before audio, e.g. a music outro, an audio track
+            // longer than the picture or encoder priming/tail samples.
+            self.native_video = None;
+            self.native_held_frame = None;
             if let Err(error) = result { self.native_error = Some(error); }
+            if self.native_audio.is_none() {
+                self.preview_for = None;
+                self.preview_loading = false;
+                self.preview_requested_seconds = self.preview_seconds;
+            }
         }
     }
 
@@ -723,10 +748,13 @@ impl EncoderApp {
             ui.horizontal_wrapped(|ui| {
                 let live = self.native_video.as_ref().is_some_and(|p| Some(p.job_id) == self.selected_job)
                     || self.native_audio.as_ref().is_some_and(|a| Some(a.job_id) == self.selected_job);
+                let paused = self.native_paused_job == self.selected_job;
                 let playable = info.video_codec.is_some()
                     || (!info.audio_tracks.is_empty() && self.settings.audio_stream != -2);
-                if ui.add_enabled(playable,
-                    egui::Button::new(if live { "▶ Restart embedded playback" } else { "▶ Embedded playback (experimental)" })).clicked()
+                let play_label = if live { "▶ Restart embedded" }
+                    else if paused { "▶ Resume embedded" }
+                    else { "▶ Embedded playback (experimental)" };
+                if ui.add_enabled(playable, egui::Button::new(play_label)).clicked()
                     && let Some(job) = self.jobs.iter().find(|j| Some(j.id) == self.selected_job)
                 {
                     let (position, until) = info.duration_sec.map(|duration| {
@@ -738,7 +766,10 @@ impl EncoderApp {
                     }).unwrap_or((self.preview_seconds.max(0.0), None));
                     self.launch_native_video(job.id, job.input.clone(), position, until);
                 }
-                if ui.add_enabled(live, egui::Button::new("■ Stop embedded")).clicked() {
+                if ui.add_enabled(live, egui::Button::new("⏸ Pause embedded")).clicked() {
+                    self.pause_native_video();
+                }
+                if ui.add_enabled(live || paused, egui::Button::new("■ Stop embedded")).clicked() {
                     self.stop_native_video();
                 }
             });
@@ -757,7 +788,7 @@ impl EncoderApp {
                     }
                 });
             }
-            ui.small("Experimental embedded A/V: audio output via rodio, video decoded at up to 24 FPS using an approximate audio clock. FFplay remains the fallback.");
+            ui.small("Embedded playback uses an approximate audio-master clock. Pause/Resume restarts decoding at the preserved playhead; FFplay remains the fallback.");
             if let Some(texture) = &self.waveform_texture {
                 let size = egui::vec2(ui.available_width().max(100.0), 64.0);
                 ui.image((texture.id(), size));
@@ -867,7 +898,7 @@ impl EncoderApp {
                 }
             });
         }
-        ui.small("Experimental native embedded audio/video uses an approximate audio-master clock. FFplay is the reliable fallback; multi-cut EDL, audio-track editing and verified frame-accurate synchronization remain unported.");
+        ui.small("Experimental embedded A/V supports pause/resume, audio-only media and independently finishing audio tails. FFplay is the fallback; source-PTS synchronization, multi-cut EDL and audio-track editing remain unported.");
     }
 
     fn options_ui(&mut self, ui: &mut egui::Ui) {

@@ -34,7 +34,11 @@ No realtime video player, synchronized waveform/editor timeline, bulk image sequ
 ## Experimental native embedded audio playback
 - Rust tests validate FFmpeg float PCM arguments, seek/trimming and selected audio-track routing; a nonblocking audio Source test checks that the callback cannot stall waiting for FFmpeg data. Additional tests cover short final PCM blocks, malformed partial sample frames and EOF.
 - Linux generated-media integration tests also validate FFmpeg decodes real audio into 48 kHz two-channel f32le samples. Hardware output is **not** tested in headless CI.
-- Manual testing must cover Windows WASAPI, macOS CoreAudio, Linux ALSA/Pulse/PipeWire, volume, rapid seeking, device removal, video-only files, audio-only embedded playback, PCM files shorter than the prebuffer threshold, and variable-frame-rate A/V synchronization. In-app synchronization remains approximate; FFplay is the fallback.
+- Manual testing must cover Windows WASAPI, macOS CoreAudio, Linux ALSA/Pulse/PipeWire, volume, rapid seeking, device removal, video-only files, audio-only embedded playback, PCM files shorter than the prebuffer threshold, and variable-frame-rate A/V synchronization. Specifically verify Pause/Resume across the In/Out range, and audio finishing after the last video frame. In-app synchronization remains approximate; FFplay is the fallback.
+
+## Playback clock queue and video/audio EOF handling
+- Deterministic tests cover holding the first future video frame until its audio deadline and draining to the latest frame in video-only playback.
+- When video decoding ends, audio playback is intentionally allowed to drain rather than forcibly being cut off. This and Pause/Resume require live desktop validation with real A/V output.
 
 ## Continuous embedded silent video decoding
 - The Rust decoder module validates Unicode/odd-character arguments, invalid positions and trim bounds.
