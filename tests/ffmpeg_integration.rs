@@ -1,6 +1,6 @@
 //! End-to-end FFmpeg tests. Skipped on development machines without FFmpeg.
 //! Linux CI installs FFmpeg so these are exercised there.
-use rust_encoder::{encode, preview_stream, model::{HardwareEncoder, EncodeOptions, Preset}};
+use rust_encoder::{encode, preview_stream, audio_preview, model::{HardwareEncoder, EncodeOptions, Preset}};
 use std::{fs, path::{Path, PathBuf}, process::Command,
     sync::{Arc, atomic::AtomicBool}, time::Duration};
 
@@ -132,5 +132,23 @@ fn embedded_preview_streams_real_decoded_frames_and_can_cancel() {
     assert!(frame.position.is_finite());
     stream.stop();
     drop(stream);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn embedded_audio_pcm_decoder_produces_real_stereo_samples() {
+    if !ffmpeg_available() { eprintln!("Skipping audio PCM integration: FFmpeg missing"); return; }
+    let dir = std::env::temp_dir().join(format!("rust-encoder-pcm-e2e-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let input = fixture(&dir);
+    let args = audio_preview::audio_args(&input, 0.0, Some(0.5), 0).unwrap();
+    let output = Command::new("ffmpeg").args(args).output().unwrap();
+    assert!(output.status.success(), "PCM FFmpeg failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(output.stdout.len() >= 8192);
+    assert_eq!(output.stdout.len() % 8, 0, "Expected interleaved stereo f32 samples");
+    assert!(output.stdout.chunks_exact(4).take(1024)
+        .map(|x| f32::from_le_bytes(x.try_into().unwrap()))
+        .any(|sample| sample.is_finite() && sample.abs() > 0.00001));
     fs::remove_dir_all(dir).unwrap();
 }

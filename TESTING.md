@@ -31,6 +31,11 @@ No realtime video player, synchronized waveform/editor timeline, bulk image sequ
 - The Linux generated-media integration test now exercises YADIF, HQDN3D, unsharp and `eq` filters with H.264, including mono/48 kHz conversion and audio gain; FLAC additionally verifies resampling and gain.
 - These are simple FFmpeg processing modes; color-managed HDR, LUTs, per-channel mixing and two-pass broadcast loudness are not implemented.
 
+## Experimental native embedded audio playback
+- Rust tests validate FFmpeg float PCM arguments, seek/trimming and selected audio-track routing; a nonblocking audio Source test checks that the callback cannot stall waiting for FFmpeg data.
+- Linux generated-media integration tests also validate FFmpeg decodes real audio into 48 kHz two-channel f32le samples. Hardware output is **not** tested in headless CI.
+- Manual testing must cover Windows WASAPI, macOS CoreAudio, Linux ALSA/Pulse/PipeWire, volume, rapid seeking, device removal, video-only files, audio-only files, and variable-frame-rate A/V synchronization. In-app synchronization remains approximate; FFplay is the fallback.
+
 ## Continuous embedded silent video decoding
 - The Rust decoder module validates Unicode/odd-character arguments, invalid positions and trim bounds.
 - Linux FFmpeg integration tests start a real 24 FPS rawvideo stream, verify the returned frame size and cancel without hanging.

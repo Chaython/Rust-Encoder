@@ -5,3 +5,4 @@ pub mod media;
 pub mod model;
 pub mod player;
 pub mod preview_stream;
+pub mod audio_preview;

@@ -1,0 +1,214 @@
+//! Native optional PCM audio playback for the embedded media preview.
+//! FFmpeg decodes any supported source into fixed-format stereo f32le;
+//! rodio owns the OS output device. A bounded FIFO and nonblocking Source
+//! protect the audio callback against process I/O stalls.
+use crossbeam_channel::{Receiver, SendTimeoutError, TryRecvError, bounded};
+use rodio::{OutputStream, OutputStreamBuilder, Sink, Source};
+use std::{
+    ffi::OsString, io::{BufReader, Read}, path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
+    sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}},
+    thread, time::Duration,
+};
+
+pub const RATE: u32 = 48_000;
+pub const CHANNELS: u16 = 2;
+const SAMPLES_PER_BLOCK: usize = 4096;
+const PCM_BYTES: usize = SAMPLES_PER_BLOCK * 4;
+
+pub fn audio_args(input: &Path, seek: f64, end: Option<f64>, stream_index: usize)
+    -> Result<Vec<OsString>, String> {
+    if !input.is_file() { return Err(format!("Audio source does not exist: {}", input.display())); }
+    if !seek.is_finite() || seek < 0.0 { return Err("Audio start must be finite and nonnegative".into()); }
+    if let Some(end) = end
+        && (!end.is_finite() || end <= seek) {
+        return Err("Audio Out point must be later than playback start".into());
+    }
+    if stream_index > 31 { return Err("Audio track index must be 0–31".into()); }
+    let mut args: Vec<OsString> = [
+        "-nostdin", "-hide_banner", "-loglevel", "error", "-ss",
+    ].into_iter().map(OsString::from).collect();
+    args.push(format!("{seek:.3}").into());
+    args.push(OsString::from("-i"));
+    args.push(input.as_os_str().to_owned());
+    if let Some(end) = end {
+        args.push(OsString::from("-t"));
+        args.push(format!("{:.3}", end - seek).into());
+    }
+    args.extend([
+        OsString::from("-map"), OsString::from(format!("0:a:{stream_index}")),
+        OsString::from("-vn"), OsString::from("-sn"), OsString::from("-dn"),
+        OsString::from("-ac"), OsString::from(CHANNELS.to_string()),
+        OsString::from("-ar"), OsString::from(RATE.to_string()),
+        OsString::from("-f"), OsString::from("f32le"),
+        OsString::from("-c:a"), OsString::from("pcm_f32le"),
+        OsString::from("pipe:1"),
+    ]);
+    Ok(args)
+}
+
+struct PcmSource {
+    rx: Receiver<Vec<f32>>,
+    current: std::vec::IntoIter<f32>,
+    completed: Arc<AtomicBool>,
+    underruns: Arc<AtomicU64>,
+}
+
+impl Iterator for PcmSource {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(sample) = self.current.next() { return Some(sample); }
+            match self.rx.try_recv() {
+                Ok(block) => self.current = block.into_iter(),
+                Err(TryRecvError::Disconnected) => return None,
+                Err(TryRecvError::Empty) if self.completed.load(Ordering::Acquire) => return None,
+                Err(TryRecvError::Empty) => {
+                    // Never block a CPAL callback on a subprocess pipe.
+                    self.underruns.fetch_add(1, Ordering::Relaxed);
+                    return Some(0.0);
+                }
+            }
+        }
+    }
+}
+
+impl Source for PcmSource {
+    fn current_span_len(&self) -> Option<usize> { None }
+    fn channels(&self) -> u16 { CHANNELS }
+    fn sample_rate(&self) -> u32 { RATE }
+    fn total_duration(&self) -> Option<Duration> { None }
+}
+
+pub struct NativeAudioPreview {
+    pub job_id: u64,
+    seek: f64,
+    // Sink must be destroyed before its OS audio stream.
+    sink: Sink,
+    _stream: OutputStream,
+    child: Arc<Mutex<Child>>,
+    stop: Arc<AtomicBool>,
+    finished: Receiver<Result<(), String>>,
+    underruns: Arc<AtomicU64>,
+}
+
+impl NativeAudioPreview {
+    pub fn launch(job_id: u64, ffmpeg: &Path, input: &Path, seek: f64,
+                  end: Option<f64>, audio_stream: usize) -> Result<Self, String> {
+        let args = audio_args(input, seek, end, audio_stream)?;
+        let output = OutputStreamBuilder::open_default_stream()
+            .map_err(|e| format!("Cannot open system audio output: {e}"))?;
+        let sink = Sink::connect_new(output.mixer());
+        let mut child = Command::new(ffmpeg)
+            .args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null())
+            .spawn().map_err(|e| format!("Cannot start FFmpeg audio decoder: {e}"))?;
+        let stdout = child.stdout.take().ok_or("PCM decoder stdout unavailable")?;
+        let child = Arc::new(Mutex::new(child));
+        let stop = Arc::new(AtomicBool::new(false));
+        let completed = Arc::new(AtomicBool::new(false));
+        let underruns = Arc::new(AtomicU64::new(0));
+        let (tx, rx) = bounded::<Vec<f32>>(12);
+        let (done_tx, finished) = bounded::<Result<(), String>>(1);
+        let worker_child = Arc::clone(&child);
+        let worker_stop = Arc::clone(&stop);
+        let worker_completed = Arc::clone(&completed);
+        thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            let mut bytes = vec![0u8; PCM_BYTES];
+            loop {
+                if worker_stop.load(Ordering::Acquire) { break; }
+                if reader.read_exact(&mut bytes).is_err() { break; }
+                let mut block: Vec<f32> = bytes.chunks_exact(4)
+                    .map(|p| f32::from_le_bytes([p[0], p[1], p[2], p[3]])).collect();
+                loop {
+                    if worker_stop.load(Ordering::Acquire) { break; }
+                    match tx.send_timeout(block, Duration::from_millis(60)) {
+                        Ok(()) => break,
+                        Err(SendTimeoutError::Timeout(pending)) => block = pending,
+                        Err(SendTimeoutError::Disconnected(_)) => break,
+                    }
+                }
+            }
+            drop(reader);
+            let result = loop {
+                let wait = match worker_child.lock() {
+                    Ok(mut child) => {
+                        if worker_stop.load(Ordering::Acquire) { let _ = child.kill(); }
+                        child.try_wait()
+                    }
+                    Err(_) => break Err("Audio decoder process lock poisoned".into()),
+                };
+                match wait {
+                    Ok(Some(status)) if status.success() || worker_stop.load(Ordering::Acquire) => break Ok(()),
+                    Ok(Some(status)) => break Err(format!("FFmpeg audio decoder failed ({status})")),
+                    Ok(None) => thread::sleep(Duration::from_millis(20)),
+                    Err(e) => break Err(format!("Audio decoder wait error: {e}")),
+                }
+            };
+            worker_completed.store(true, Ordering::Release);
+            let _ = done_tx.try_send(result);
+        });
+        sink.append(PcmSource {
+            rx, current: Vec::new().into_iter(), completed,
+            underruns: Arc::clone(&underruns),
+        });
+        Ok(Self { job_id, seek, sink, _stream: output, child, stop, finished, underruns })
+    }
+
+    pub fn playhead(&self) -> f64 { self.seek + self.sink.get_pos().as_secs_f64() }
+    pub fn volume(&self) -> f32 { self.sink.volume() }
+    pub fn set_volume(&self, value: f32) { self.sink.set_volume(value.clamp(0.0, 1.0)); }
+    pub fn underruns(&self) -> u64 { self.underruns.load(Ordering::Relaxed) }
+    pub fn decoder_result(&self) -> Option<Result<(), String>> { self.finished.try_recv().ok() }
+    pub fn finished_playback(&self) -> bool { self.sink.empty() }
+    pub fn stop(&self) {
+        self.stop.store(true, Ordering::Release);
+        self.sink.stop();
+        if let Ok(mut child) = self.child.lock() { let _ = child.kill(); }
+    }
+}
+impl Drop for NativeAudioPreview {
+    fn drop(&mut self) { self.stop(); }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn pcm_arguments_preserve_seek_selection_and_path() {
+        let path = std::env::temp_dir().join(format!("audio-preview-{}-🦀 &.mkv", std::process::id()));
+        std::fs::write(&path, b"fixture").unwrap();
+        let args = audio_args(&path, 1.25, Some(3.25), 2).unwrap();
+        assert!(args.windows(2).any(|a| a[0] == "-map" && a[1] == "0:a:2"));
+        assert!(args.windows(2).any(|a| a[0] == "-ss" && a[1] == "1.250"));
+        assert!(args.windows(2).any(|a| a[0] == "-t" && a[1] == "2.000"));
+        assert_eq!(args.last().unwrap(), "pipe:1");
+        assert!(args.iter().any(|a| a == path.as_os_str()));
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn pcm_validation_rejects_invalid_offsets() {
+        let path = std::env::temp_dir().join(format!("audio-preview-{}.mkv", std::process::id()));
+        std::fs::write(&path, b"fixture").unwrap();
+        for seek in [f64::NAN, f64::INFINITY, -0.1] {
+            assert!(audio_args(&path, seek, None, 0).is_err());
+        }
+        assert!(audio_args(&path, 1.0, Some(0.5), 0).is_err());
+        assert!(audio_args(&path, 1.0, None, 32).is_err());
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn audio_callback_does_not_block_without_samples() {
+        let (_tx, rx) = bounded(1);
+        let mut source = PcmSource {
+            rx, current: Vec::new().into_iter(),
+            completed: Arc::new(AtomicBool::new(false)),
+            underruns: Arc::new(AtomicU64::new(0)),
+        };
+        assert_eq!(source.next(), Some(0.0));
+        assert_eq!(source.underruns.load(Ordering::Relaxed), 1);
+        source.completed.store(true, Ordering::Release);
+        assert_eq!(source.next(), None);
+    }
+}
