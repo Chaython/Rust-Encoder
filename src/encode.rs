@@ -1347,6 +1347,22 @@ mod tests {
     }
 
     #[test]
+    fn loudness_target_reaches_ffmpeg_without_silent_substitution() {
+        let dir = std::env::temp_dir().join(format!("rust-encoder-lufs-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.mkv");
+        fs::write(&input, b"fixture").unwrap();
+        let mut o = options(Preset::H264);
+        o.normalize_audio = true;
+        o.normalization_target_lufs = -23;
+        let args = build_args(&input, &dir.join("out.mp4"), &o).unwrap();
+        assert!(args.windows(2).any(|p| p[0] == "-af"
+            && p[1].to_string_lossy().contains("loudnorm=I=-23:TP=-1.5:LRA=11")));
+        o.normalization_target_lufs = 0;
+        assert!(validate_options(&o).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn fractional_fps_uses_exact_rational_ffmpeg_filter() {
         let dir = std::env::temp_dir().join(format!("rust-encoder-rational-fps-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
