@@ -116,6 +116,10 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     if !(-31..=-5).contains(&options.normalization_target_lufs) {
         return Err("Normalization target must be between -31 and -5 LUFS".into());
     }
+    if !options.audio_offset_seconds.is_finite()
+        || !(-600.0..=600.0).contains(&options.audio_offset_seconds) {
+        return Err("Audio offset must be between -600 and 600 seconds".into());
+    }
     if !options.audio_gain_db.is_finite() || !(-30.0..=30.0).contains(&options.audio_gain_db) {
         return Err("Audio gain must be finite and between -30 and +30 dB".into());
     }
@@ -147,7 +151,8 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     }
     let audio_processing = options.audio_channels != 0 || options.audio_sample_rate != 0
         || options.audio_gain_db != 0.0 || options.normalize_audio
-        || options.audio_fade_in_seconds > 0.0 || options.audio_fade_out_seconds > 0.0;
+        || options.audio_fade_in_seconds > 0.0 || options.audio_fade_out_seconds > 0.0
+        || options.audio_offset_seconds != 0.0;
     if audio_processing && !(options.preset.video() || options.preset.audio_only()) {
         return Err("Audio processing requires an encoding preset, not stream copy or analysis".into());
     }
@@ -199,6 +204,12 @@ pub fn expected_duration(info: &MediaInfo, settings: &EncodeOptions) -> Option<f
 
 fn audio_filters(o: &EncodeOptions) -> Vec<String> {
     let mut filters = Vec::new();
+    if o.audio_offset_seconds > 0.0 {
+        filters.push(format!("adelay={:.0}:all=1", o.audio_offset_seconds as f64 * 1000.0));
+    } else if o.audio_offset_seconds < 0.0 {
+        filters.push(format!("atrim=start={:.3},asetpts=PTS-STARTPTS",
+            -o.audio_offset_seconds));
+    }
     if o.audio_gain_db != 0.0 { filters.push(format!("volume={:.2}dB", o.audio_gain_db)); }
     if o.normalize_audio {
         filters.push(format!("loudnorm=I={}:TP=-1.5:LRA=11", o.normalization_target_lufs));
@@ -927,7 +938,7 @@ mod tests {
             audio_stream: -1, subtitle_stream: -1, video_stream: 0,
             deinterlace: false, denoise: false, sharpen: false,
             brightness: 0.0, contrast: 1.0, saturation: 1.0, gamma: 1.0,
-            audio_channels: 0, audio_sample_rate: 0, audio_gain_db: 0.0,
+            audio_channels: 0, audio_sample_rate: 0, audio_gain_db: 0.0, audio_offset_seconds: 0.0,
             output_dir: None, ffmpeg: PathBuf::from("ffmpeg") }
     }
     #[test]
