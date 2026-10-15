@@ -178,12 +178,34 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         if !preset.video() {
             skipped.push("Frame-rate conform is unavailable for this function".into());
         } else if let Some(value) = get("comboFPS") {
-            match value.trim().parse::<u16>() {
-                Ok(fps) if (1..=240).contains(&fps) => {
-                    settings.frame_rate = fps;
-                    applied.push(format!("Conform frame rate: {fps} FPS"));
+            match value.trim() {
+                "23,98" | "23.98" => {
+                    settings.frame_rate = 0;
+                    settings.frame_rate_numerator = 24_000;
+                    settings.frame_rate_denominator = 1001;
+                    applied.push("Conform frame rate: 24000/1001 FPS".into());
                 }
-                _ => skipped.push(format!("Fractional or unsupported conform FPS: {value}")),
+                "29,97" | "29.97" => {
+                    settings.frame_rate = 0;
+                    settings.frame_rate_numerator = 30_000;
+                    settings.frame_rate_denominator = 1001;
+                    applied.push("Conform frame rate: 30000/1001 FPS".into());
+                }
+                "59,94" | "59.94" => {
+                    settings.frame_rate = 0;
+                    settings.frame_rate_numerator = 60_000;
+                    settings.frame_rate_denominator = 1001;
+                    applied.push("Conform frame rate: 60000/1001 FPS".into());
+                }
+                raw => match raw.parse::<u16>() {
+                    Ok(fps) if (1..=240).contains(&fps) => {
+                        settings.frame_rate = fps;
+                        settings.frame_rate_numerator = 0;
+                        settings.frame_rate_denominator = 1;
+                        applied.push(format!("Conform frame rate: {fps} FPS"));
+                    }
+                    _ => skipped.push(format!("Unsupported conform FPS: {value}")),
+                }
             }
         } else {
             skipped.push("Conform FPS enabled without a stored frame rate".into());
@@ -232,9 +254,12 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
             continue;
         }
         let frames = get(duration_key).and_then(|s| s.parse::<u32>().ok());
-        if let (Some(frames), fps) = (frames, settings.frame_rate) {
-            if frames > 0 && fps > 0 && (frames as f32 / fps as f32) <= 600.0 {
-                let seconds = frames as f32 / fps as f32;
+        let fps = if settings.frame_rate_numerator > 0 && settings.frame_rate_denominator > 0 {
+            settings.frame_rate_numerator as f32 / settings.frame_rate_denominator as f32
+        } else { settings.frame_rate as f32 };
+        if let Some(frames) = frames {
+            if frames > 0 && fps > 0 && (frames as f32 / fps) <= 600.0 {
+                let seconds = frames as f32 / fps;
                 if is_audio { settings.audio_fade_in_seconds = seconds; }
                 else { settings.video_fade_in_seconds = seconds; }
                 applied.push(format!("{enabled}: {frames} frames at {fps} FPS"));
@@ -361,8 +386,8 @@ mod tests {
         let integer = import_xml(&xml("60"), &Settings::default()).unwrap();
         assert_eq!(integer.settings.frame_rate, 60);
         let fractional = import_xml(&xml("59,94"), &Settings::default()).unwrap();
-        assert_eq!(fractional.settings.frame_rate, 0);
-        assert!(fractional.skipped.iter().any(|entry| entry.contains("59,94")));
+        assert_eq!(fractional.settings.frame_rate_numerator, 60_000);
+        assert_eq!(fractional.settings.frame_rate_denominator, 1001);
         let disabled = xml("30").replace("<Value>true</Value>", "<Value>false</Value>");
         let no_conform = import_xml(&disabled, &Settings::default()).unwrap();
         assert_eq!(no_conform.settings.frame_rate, 0);
