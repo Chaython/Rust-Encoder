@@ -96,6 +96,41 @@ fn validate_audio_tracks_in_job(options: &EncodeOptions, count: usize) -> Result
     Ok(())
 }
 
+/// Verify every explicitly selected stream against this particular batch
+/// file. Track counts can vary even when the same profile is applied to all
+/// queued files; report routing mistakes before launching FFmpeg.
+fn validate_media_tracks_in_job(options: &EncodeOptions, info: &MediaInfo) -> Result<(), String> {
+    let video_required = options.preset.video() || matches!(options.preset,
+        Preset::VideoOnly | Preset::PngStill | Preset::JpegStill |
+        Preset::FrameMd5 | Preset::BlackDetect | Preset::FreezeDetect);
+    if video_required && options.video_stream as usize >= info.video_tracks.len() {
+        return Err(format!("Video track #{} does not exist (this file has {} video tracks)",
+            options.video_stream, info.video_tracks.len()));
+    }
+
+    // Subtitle extractors default to track zero when no explicit selection
+    // was made. Encoders map subtitles only when a track is selected.
+    if matches!(options.preset, Preset::ExtractSrt | Preset::ExtractAss)
+        || (options.preset.video() && options.subtitle_stream >= 0) {
+        let index = options.subtitle_stream.max(0) as usize;
+        if index >= info.subtitle_tracks.len() {
+            return Err(format!("Subtitle track #{index} does not exist (this file has {} subtitle tracks)",
+                info.subtitle_tracks.len()));
+        }
+    }
+
+    // Analysis presets also use a concrete audio stream even if the selector
+    // reads "All tracks": FFmpeg maps its first audio stream in that case.
+    if matches!(options.preset, Preset::SilenceDetect | Preset::LoudnessReport) {
+        let index = options.audio_stream.max(0) as usize;
+        if index >= info.audio_tracks.len() {
+            return Err(format!("Audio track #{index} does not exist (this file has {} audio tracks)",
+                info.audio_tracks.len()));
+        }
+    }
+    validate_audio_tracks_in_job(options, info.audio_tracks.len())
+}
+
 pub struct EncoderApp {
     settings: Settings,
     jobs: Vec<Job>,
@@ -452,7 +487,7 @@ impl EncoderApp {
         if !self.process_queue || self.current.is_some() { return; }
         if let Some(job) = self.jobs.iter_mut().find(|j| matches!(j.status, JobState::Queued)) {
             if let Some(info) = job.media.as_ref() {
-                if let Err(message) = validate_audio_tracks_in_job(&job.options, info.audio_tracks.len()) {
+                if let Err(message) = validate_media_tracks_in_job(&job.options, info) {
                     job.status = JobState::Failed(message);
                     return;
                 }
@@ -1914,7 +1949,9 @@ fn sanitize_codec_settings(settings: &mut Settings) {
         settings.video_fade_out_seconds = 0.0;
     }
     if !(settings.preset.video() || settings.preset.audio_only())
-        || settings.audio_stream < 0 {
+        || settings.audio_stream < 0
+        || settings.audio_mix_secondary_stream == settings.audio_stream {
+        // A changed primary selection must never also be its own secondary.
         settings.audio_mix_secondary_stream = -1;
     }
     if settings.audio_mix_secondary_stream < 0 {
@@ -2216,6 +2253,61 @@ mod tests {
         sanitize_codec_settings(&mut settings);
         assert_eq!(settings.video_fade_in_seconds, 0.0);
     }
+    #[test]
+    fn batch_validates_video_subtitle_and_analysis_tracks_before_ffmpeg() {
+        let mut s = Settings::default();
+        let mut info = MediaInfo::default();
+        info.video_tracks = vec![Default::default()];
+        info.audio_tracks = vec![Default::default(), Default::default()];
+        info.subtitle_tracks = vec![Default::default()];
+        assert!(validate_media_tracks_in_job(&s.encode_options(), &info).is_ok());
+
+        s.video_stream = 1;
+        assert!(validate_media_tracks_in_job(&s.encode_options(), &info)
+            .unwrap_err().contains("Video track #1"));
+        s.video_stream = 0;
+        s.subtitle_stream = 1;
+        assert!(validate_media_tracks_in_job(&s.encode_options(), &info)
+            .unwrap_err().contains("Subtitle track #1"));
+        s.subtitle_stream = -1;
+
+        s.preset = Preset::ExtractSrt;
+        assert!(validate_media_tracks_in_job(&s.encode_options(), &info).is_ok());
+        info.subtitle_tracks.clear();
+        assert!(validate_media_tracks_in_job(&s.encode_options(), &info)
+            .unwrap_err().contains("Subtitle track #0"));
+
+        s.preset = Preset::BlackDetect;
+        info.video_tracks.clear();
+        assert!(validate_media_tracks_in_job(&s.encode_options(), &info)
+            .unwrap_err().contains("Video track #0"));
+        s.preset = Preset::VideoOnly;
+        assert!(validate_media_tracks_in_job(&s.encode_options(), &info).is_err());
+        s.preset = Preset::SilenceDetect;
+        s.audio_stream = 2;
+        assert!(validate_media_tracks_in_job(&s.encode_options(), &info)
+            .unwrap_err().contains("Audio track #2"));
+        s.audio_stream = -1;
+        info.audio_tracks.clear();
+        assert!(validate_media_tracks_in_job(&s.encode_options(), &info)
+            .unwrap_err().contains("Audio track #0"));
+
+        s.preset = Preset::RemuxMkv;
+        assert!(validate_media_tracks_in_job(&s.encode_options(), &info).is_ok());
+    }
+
+    #[test]
+    fn changing_primary_to_secondary_clears_invalid_mix_routing() {
+        let mut s = Settings::default();
+        s.audio_stream = 0;
+        s.audio_mix_secondary_stream = 1;
+        s.audio_mix_extra_tracks = vec![2, 3];
+        s.audio_stream = 1;
+        sanitize_codec_settings(&mut s);
+        assert_eq!(s.audio_mix_secondary_stream, -1);
+        assert!(s.audio_mix_extra_tracks.is_empty());
+    }
+
     #[test]
     fn batch_mix_rejects_missing_extra_tracks() {
         let mut s = Settings::default();
