@@ -189,10 +189,11 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     if audio_processing && options.audio_stream == -2 {
         return Err("Audio processing requires an enabled audio stream".into());
     }
-    if options.frame_rate_numerator > 0
-        && (options.frame_rate_denominator == 0
-            || options.frame_rate_numerator as f64 / options.frame_rate_denominator as f64 > 240.0
-            || options.frame_rate_numerator as f64 / options.frame_rate_denominator as f64 < 1.0) {
+    // Integer cross-multiplication avoids floating-point rounding and the
+    // Rust parsing ambiguity around `as f64 < ...` in this comparison.
+    let fps_num = u64::from(options.frame_rate_numerator);
+    let fps_den = u64::from(options.frame_rate_denominator);
+    if fps_num > 0 && (fps_den == 0 || fps_num < fps_den || fps_num > fps_den * 240) {
         return Err("Rational frame rate must be between 1 and 240 FPS".into());
     }
     if options.frame_rate > 240 {
