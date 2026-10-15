@@ -289,7 +289,7 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
             settings.frame_rate_numerator as f32 / settings.frame_rate_denominator as f32
         } else { settings.frame_rate as f32 };
         if let Some(frames) = frames {
-            if frames > 0 && fps > 0 && (frames as f32 / fps) <= 600.0 {
+            if frames > 0 && fps > 0.0 && (frames as f32 / fps) <= 600.0 {
                 let seconds = frames as f32 / fps;
                 if is_audio { settings.audio_fade_in_seconds = seconds; }
                 else { settings.video_fade_in_seconds = seconds; }
