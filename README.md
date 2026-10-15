@@ -78,6 +78,10 @@ The video controls now support four Shutter Encoder-equivalent processing settin
 
 The broadcast video limiter converts its filter input into a known 8-bit or 10-bit pixel format *before* clipping; this avoids applying 10-bit thresholds to an 8-bit source. ProRes retains its 10-bit 4:2:2 format and DNxHR retains 8-bit 4:2:2. FFmpeg filters run on the CPU, so these effects can increase transcoding time. Full LUT, motion-adaptive, Vulkan and color-workflow parity remains unfinished.
 
+## Mix two audio tracks
+
+When video or audio is being re-encoded, select a **specific primary audio track** and optionally mix a **different secondary track**. FFmpeg `amix` combines them into a single encoded audio stream with normalized levels; existing gain, equalizer, normalization, timing, and fade filters apply **after** mixing. This does not copy the original separate audio tracks. Mixing is disabled for stream-copy, analysis and two-pass encoding, and the Shutter `caseMixAudio` checkbox is not automatically imported because its settings may describe a different routing arrangement.
+
 ## Audio synchronization offset
 
 Encoding presets now support a signed **audio offset in seconds**. Positive values delay audio using FFmpeg `adelay`; negative values advance audio by trimming its beginning and resetting timestamps. This requires an enabled, re-encoded audio stream. Shutter Encoder `.enc` audio-offset frame counts import only when an explicit conform FPS is available; without a known source timebase the importer warns instead of guessing. When a positive offset is combined with fade-in, the fade begins when the delayed audio becomes audible rather than fading the inserted silence. This is a timing adjustment, not full per-track audio routing.

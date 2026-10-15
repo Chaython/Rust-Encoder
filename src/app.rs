@@ -1172,6 +1172,7 @@ impl EncoderApp {
                 self.settings.audio_channels = 0;
                 self.settings.audio_sample_rate = 0;
                 self.settings.audio_gain_db = 0.0;
+                self.settings.audio_mix_secondary_stream = -1;
                 self.settings.normalize_audio = false;
             }
             if !self.settings.preset.video() {
@@ -1604,6 +1605,36 @@ impl EncoderApp {
                                 changed |= ui.selectable_value(&mut self.settings.audio_stream, n as i32, name).changed();
                             }
                         });
+                    ui.label("Mix another audio track into one output track");
+                    egui::ComboBox::from_id_salt("audio-mix-secondary")
+                        .selected_text(if self.settings.audio_mix_secondary_stream == -1 {
+                            "Off (preserve track selection)".to_owned()
+                        } else {
+                            format!("Mix with Audio #{}", self.settings.audio_mix_secondary_stream)
+                        })
+                        .show_ui(ui, |ui| {
+                            changed |= ui.selectable_value(&mut self.settings.audio_mix_secondary_stream,
+                                -1, "Off").changed();
+                            if self.settings.audio_stream >= 0 {
+                                let count = selected_info.map(|m| m.audio_tracks.len())
+                                    .unwrap_or(8).min(32);
+                                for n in 0..count {
+                                    if n as i32 == self.settings.audio_stream { continue; }
+                                    let label = selected_info.map(|m| m.audio_tracks[n].description(n))
+                                        .unwrap_or_else(|| format!("Audio #{n}"));
+                                    changed |= ui.selectable_value(&mut self.settings.audio_mix_secondary_stream,
+                                        n as i32, label).changed();
+                                }
+                            }
+                        });
+                    if self.settings.audio_mix_secondary_stream >= 0 {
+                        ui.small("Mixes only the selected two audio tracks into one stream. Choose a specific primary track, not All. Other audio tracks are not copied.");
+                    }
+                    if self.settings.audio_stream < 0
+                        && self.settings.audio_mix_secondary_stream >= 0 {
+                        self.settings.audio_mix_secondary_stream = -1;
+                        changed = true;
+                    }
                     if self.settings.audio_stream == -2 {
                         // Removing audio must also remove any processing that requires it.
                         if self.settings.normalize_audio || self.settings.audio_channels != 0
@@ -1815,6 +1846,10 @@ fn sanitize_codec_settings(settings: &mut Settings) {
         settings.broadcast_video_limiter = false;
         settings.video_fade_in_seconds = 0.0;
         settings.video_fade_out_seconds = 0.0;
+    }
+    if !(settings.preset.video() || settings.preset.audio_only())
+        || settings.audio_stream < 0 {
+        settings.audio_mix_secondary_stream = -1;
     }
     if !(settings.preset.video() || settings.preset.audio_only())
         || settings.audio_stream == -2 {

@@ -176,7 +176,22 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
         && !options.preset.video() {
         return Err("Video fade-in requires a video encoding preset".into());
     }
-    let audio_processing = options.audio_channels != 0 || options.audio_sample_rate != 0
+    if options.audio_mix_secondary_stream < -1 || options.audio_mix_secondary_stream > 31 {
+        return Err("Secondary audio mix track must be -1 (disabled) or 0–31".into());
+    }
+    if options.audio_mix_secondary_stream >= 0 {
+        if options.audio_stream < 0 || options.audio_stream > 31 {
+            return Err("Select a specific primary audio track before mixing".into());
+        }
+        if options.audio_stream == options.audio_mix_secondary_stream {
+            return Err("Cannot mix an audio track with itself".into());
+        }
+        if options.two_pass {
+            return Err("Two-pass encoding with mixed audio is not yet supported".into());
+        }
+    }
+    let audio_processing = options.audio_mix_secondary_stream >= 0
+        || options.audio_channels != 0 || options.audio_sample_rate != 0
         || options.audio_gain_db != 0.0 || options.normalize_audio
         || options.audio_fade_in_seconds > 0.0 || options.audio_fade_out_seconds > 0.0
         || options.audio_offset_seconds != 0.0
@@ -270,6 +285,22 @@ fn audio_filters(o: &EncodeOptions) -> Vec<String> {
             (o.end_seconds - o.start_seconds - o.audio_fade_out_seconds as f64).max(0.0), o.audio_fade_out_seconds));
     }
     filters
+}
+
+/// Create a single audio output from two explicitly selected source tracks.
+/// All optional audio processing runs once on the mixed stream afterwards.
+fn mixed_audio_filter_graph(o: &EncodeOptions) -> String {
+    let mut graph = format!(
+        "[0:a:{}][0:a:{}]amix=inputs=2:duration=longest:dropout_transition=0:normalize=1",
+        o.audio_stream, o.audio_mix_secondary_stream,
+    );
+    let effects = audio_filters(o);
+    if !effects.is_empty() {
+        graph.push(',');
+        graph.push_str(&effects.join(","));
+    }
+    graph.push_str("[mixed_audio]");
+    graph
 }
 
 /// FFmpeg args are kept as OS strings and never joined into a shell command.
@@ -375,7 +406,12 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
         }
         preset if preset.audio_only() => {
             if o.audio_stream == -2 { return Err("An audio stream is required for audio extraction".into()); }
-            arg!("-map"); arg!(&format!("0:a:{}", o.audio_stream.max(0)));
+            if o.audio_mix_secondary_stream >= 0 {
+                arg!("-filter_complex"); arg!(&mixed_audio_filter_graph(o));
+                arg!("-map"); arg!("[mixed_audio]");
+            } else {
+                arg!("-map"); arg!(&format!("0:a:{}", o.audio_stream.max(0)));
+            }
             for a in ["-vn", "-sn", "-dn"] { arg!(a); }
             match preset {
                 Preset::Wav => { arg!("-c:a"); arg!("pcm_s24le"); }
@@ -388,17 +424,24 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
             if matches!(preset, Preset::Mp3 | Preset::Aac | Preset::Opus) {
                 arg!("-b:a"); arg!(&format!("{}k", o.audio_bitrate_kbps));
             }
-            let filters = audio_filters(o);
-            if !filters.is_empty() { arg!("-af"); arg!(&filters.join(",")); }
+            if o.audio_mix_secondary_stream < 0 {
+                let filters = audio_filters(o);
+                if !filters.is_empty() { arg!("-af"); arg!(&filters.join(",")); }
+            }
             if o.audio_channels != 0 { arg!("-ac"); arg!(&o.audio_channels.to_string()); }
             if o.audio_sample_rate != 0 { arg!("-ar"); arg!(&o.audio_sample_rate.to_string()); }
         }
         preset => {
             arg!("-map"); arg!(&format!("0:v:{}", o.video_stream));
-            match o.audio_stream {
-                -2 => {},
-                -1 => { arg!("-map"); arg!("0:a?"); },
-                index => { arg!("-map"); arg!(&format!("0:a:{index}")); }
+            if o.audio_mix_secondary_stream >= 0 {
+                arg!("-filter_complex"); arg!(&mixed_audio_filter_graph(o));
+                arg!("-map"); arg!("[mixed_audio]");
+            } else {
+                match o.audio_stream {
+                    -2 => {},
+                    -1 => { arg!("-map"); arg!("0:a?"); },
+                    index => { arg!("-map"); arg!(&format!("0:a:{index}")); }
+                }
             }
             if o.subtitle_stream >= 0 {
                 arg!("-map"); arg!(&format!("0:s:{}", o.subtitle_stream));
@@ -582,8 +625,10 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
                 if preset == Preset::Vp9 { arg!("-c:a"); arg!("libopus"); }
                 else if matches!(preset, Preset::ProRes | Preset::Dnxhr) { arg!("-c:a"); arg!("pcm_s16le"); }
                 else { arg!("-c:a"); arg!("aac"); arg!("-b:a"); arg!(&format!("{}k", o.audio_bitrate_kbps)); }
-                let filters = audio_filters(o);
-                if !filters.is_empty() { arg!("-af"); arg!(&filters.join(",")); }
+                if o.audio_mix_secondary_stream < 0 {
+                    let filters = audio_filters(o);
+                    if !filters.is_empty() { arg!("-af"); arg!(&filters.join(",")); }
+                }
                 if o.audio_channels != 0 { arg!("-ac"); arg!(&o.audio_channels.to_string()); }
                 if o.audio_sample_rate != 0 { arg!("-ar"); arg!(&o.audio_sample_rate.to_string()); }
             }
@@ -1014,7 +1059,7 @@ mod tests {
             hardware_encoder: HardwareEncoder::Software,
             frame_rate: 0, frame_rate_numerator: 0, frame_rate_denominator: 1, crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
             rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
-            audio_stream: -1, subtitle_stream: -1, video_stream: 0,
+            audio_stream: -1, audio_mix_secondary_stream: -1, subtitle_stream: -1, video_stream: 0,
             deinterlace: false, broadcast_video_limiter: false,
             video_detail_amount: 0, video_grain_amount: 0,
             video_nlmeans_strength: 0, video_deflicker_amount: 0,

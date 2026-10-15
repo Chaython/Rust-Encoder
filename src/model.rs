@@ -192,6 +192,8 @@ pub struct Settings {
     pub flip_horizontal: bool,
     pub flip_vertical: bool,
     pub audio_stream: i32, // -1 all, -2 none, otherwise zero-based track index
+    #[serde(default = "default_audio_mix_secondary_stream")]
+    pub audio_mix_secondary_stream: i32, // -1 disables 2-track mix; >=0 selects secondary
     pub subtitle_stream: i32, // -1 none, otherwise zero-based track index
     pub video_stream: u32, // zero-based track index
     pub deinterlace: bool,
@@ -249,7 +251,7 @@ impl Default for Settings {
             hardware_encoder: HardwareEncoder::Software, frame_rate: 0, frame_rate_numerator: 0, frame_rate_denominator: 1,
             crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
             rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
-            audio_stream: -1, subtitle_stream: -1, video_stream: 0,
+            audio_stream: -1, audio_mix_secondary_stream: -1, subtitle_stream: -1, video_stream: 0,
             deinterlace: false, broadcast_video_limiter: false, video_detail_amount: 0,
             video_grain_amount: 0, video_nlmeans_strength: 0,
             video_deflicker_amount: 0, denoise: false, sharpen: false,
@@ -299,6 +301,7 @@ pub struct EncodeOptions {
     pub flip_horizontal: bool,
     pub flip_vertical: bool,
     pub audio_stream: i32, // -1 all, -2 none, otherwise zero-based track index
+    pub audio_mix_secondary_stream: i32, // -1 disables mixing
     pub subtitle_stream: i32, // -1 none, otherwise zero-based track index
     pub video_stream: u32, // zero-based track index
     pub deinterlace: bool,
@@ -353,7 +356,8 @@ impl Settings {
             crop_x: self.crop_x, crop_y: self.crop_y,
             rotate_degrees: self.rotate_degrees,
             flip_horizontal: self.flip_horizontal, flip_vertical: self.flip_vertical,
-            audio_stream: self.audio_stream, subtitle_stream: self.subtitle_stream,
+            audio_stream: self.audio_stream, audio_mix_secondary_stream: self.audio_mix_secondary_stream,
+            subtitle_stream: self.subtitle_stream,
             video_stream: self.video_stream,
             deinterlace: self.deinterlace, broadcast_video_limiter: self.broadcast_video_limiter,
             video_detail_amount: self.video_detail_amount,
@@ -456,6 +460,7 @@ mod tests {
         assert_eq!(settings.video_nlmeans_strength, 0);
         assert_eq!(settings.video_deflicker_amount, 0);
         assert_eq!(settings.audio_offset_seconds, 0.0);
+        assert_eq!(settings.audio_mix_secondary_stream, -1);
         assert_eq!(settings.audio_fade_in_seconds, 0.0);
         assert_eq!(settings.audio_fade_out_seconds, 0.0);
         assert_eq!(settings.audio_highpass_hz, 0);
@@ -477,3 +482,5 @@ fn default_fps_denominator() -> u32 { 1 }
 fn default_normalization_target_lufs() -> i8 { -16 }
 
 fn default_audio_equalizer_hz() -> u32 { 1000 }
+
+fn default_audio_mix_secondary_stream() -> i32 { -1 }

@@ -16,7 +16,7 @@ fn options(preset: Preset) -> EncodeOptions {
         hardware_encoder: HardwareEncoder::Software, frame_rate: 0, frame_rate_numerator: 0, frame_rate_denominator: 1,
         crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
         rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
-        audio_stream: -1, subtitle_stream: -1, video_stream: 0,
+        audio_stream: -1, audio_mix_secondary_stream: -1, subtitle_stream: -1, video_stream: 0,
         deinterlace: false, broadcast_video_limiter: false,
         video_detail_amount: 0, video_grain_amount: 0,
         video_nlmeans_strength: 0, video_deflicker_amount: 0,
