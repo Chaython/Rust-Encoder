@@ -548,7 +548,7 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
                     o.video_grain_amount / 5));
             }
             if o.video_deflicker_amount > 0 {
-                let frames = ((128 * o.video_deflicker_amount as u32 + 99) / 100 + 1);
+                let frames = (128 * o.video_deflicker_amount as u32 + 99) / 100 + 1;
                 video_filters.push(format!("deflicker=s={frames}"));
             }
             if o.crop_width > 0 {
