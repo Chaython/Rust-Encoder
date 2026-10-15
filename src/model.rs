@@ -206,6 +206,7 @@ pub struct Settings {
     pub audio_channels: u8, // 0 source, 1 mono, 2 stereo
     pub audio_sample_rate: u32, // 0 original
     pub audio_gain_db: f32, // -30..30 dB
+    #[serde(default)]
     pub audio_offset_seconds: f32, // positive delays audio; negative advances it
     pub output_dir: String,
     pub ffmpeg_path: String,
