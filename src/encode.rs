@@ -151,6 +151,12 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     if audio_processing && options.audio_stream == -2 {
         return Err("Audio processing requires an enabled audio stream".into());
     }
+    if options.frame_rate_numerator > 0
+        && (options.frame_rate_denominator == 0
+            || options.frame_rate_numerator as f64 / options.frame_rate_denominator as f64 > 240.0
+            || options.frame_rate_numerator as f64 / options.frame_rate_denominator as f64 < 1.0) {
+        return Err("Rational frame rate must be between 1 and 240 FPS".into());
+    }
     if options.frame_rate > 240 {
         return Err("Frame rate must be 0 (original) or 1–240".into());
     }
@@ -170,7 +176,7 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
         return Err("This hardware encoder supports H.264/H.265 only. Switch to CPU/software for other functions".into());
     }
     if !options.preset.video() && (
-        options.frame_rate != 0 || options.crop_width != 0 || options.crop_height != 0 ||
+        options.frame_rate != 0 || options.frame_rate_numerator != 0 || options.crop_width != 0 || options.crop_height != 0 ||
         options.rotate_degrees != 0 || options.flip_horizontal || options.flip_vertical || options.target_width != 0
         || options.deinterlace || options.denoise || options.sharpen
         || options.brightness != 0.0 || options.contrast != 1.0
@@ -471,7 +477,11 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
             }
             if o.target_width > 0 { video_filters.push(format!("scale={}:-2:flags=lanczos", o.target_width)); }
             if o.sharpen { video_filters.push("unsharp=5:5:1.0:5:5:0.0".into()); }
-            if o.frame_rate > 0 { video_filters.push(format!("fps={}", o.frame_rate)); }
+            if o.frame_rate_numerator > 0 {
+                video_filters.push(format!("fps={}/{}", o.frame_rate_numerator, o.frame_rate_denominator));
+            } else if o.frame_rate > 0 {
+                video_filters.push(format!("fps={}", o.frame_rate));
+            }
             if !video_filters.is_empty() { arg!("-vf"); arg!(&video_filters.join(",")); }
             if o.audio_stream != -2 {
                 if preset == Preset::Vp9 { arg!("-c:a"); arg!("libopus"); }
@@ -907,7 +917,7 @@ mod tests {
             audio_fade_in_seconds: 0.0, video_fade_in_seconds: 0.0,
             audio_fade_out_seconds: 0.0, video_fade_out_seconds: 0.0,
             hardware_encoder: HardwareEncoder::Software,
-            frame_rate: 0, crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
+            frame_rate: 0, frame_rate_numerator: 0, frame_rate_denominator: 1, crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
             rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
             audio_stream: -1, subtitle_stream: -1, video_stream: 0,
             deinterlace: false, denoise: false, sharpen: false,
