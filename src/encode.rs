@@ -109,6 +109,12 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
         || !options.gamma.is_finite() || !(0.1..=4.0).contains(&options.gamma) {
         return Err("Color settings out of range or non-finite".into());
     }
+    if !(-10..=10).contains(&options.video_detail_amount)
+        || options.video_grain_amount > 100
+        || options.video_nlmeans_strength > 10
+        || options.video_deflicker_amount > 100 {
+        return Err("Video detail, grain, NLMeans or deflicker setting is out of range".into());
+    }
     if options.audio_channels > 2 { return Err("Audio channels: choose source (0), mono (1) or stereo (2)".into()); }
     if options.audio_sample_rate != 0 && !(8_000..=192_000).contains(&options.audio_sample_rate) {
         return Err("Sample rate must be 0 (source) or 8000–192000 Hz".into());
@@ -211,6 +217,8 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
         options.frame_rate != 0 || options.frame_rate_numerator != 0 || options.crop_width != 0 || options.crop_height != 0 ||
         options.rotate_degrees != 0 || options.flip_horizontal || options.flip_vertical || options.target_width != 0
         || options.deinterlace || options.broadcast_video_limiter || options.denoise || options.sharpen
+        || options.video_detail_amount != 0 || options.video_grain_amount != 0
+        || options.video_nlmeans_strength != 0 || options.video_deflicker_amount != 0
         || options.brightness != 0.0 || options.contrast != 1.0
         || options.saturation != 1.0 || options.gamma != 1.0
     ) {
@@ -512,15 +520,36 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
             }
             if o.deinterlace { video_filters.push("yadif=mode=send_frame:parity=auto:deint=all".into()); }
             if o.broadcast_video_limiter {
-                // Shutter's limiter clamps legal-range luma/chroma rather
-                // than compressing audio peaks. Use 8/10-bit native levels.
-                if o.output_bit_depth == 10 {
+                // FFmpeg's limiter works on the CURRENT filter pixel depth,
+                // not the encoded output depth. Convert first, or the 10-bit
+                // limits could be applied to an 8-bit source (crushing it).
+                let format = if preset == Preset::ProRes { "yuv422p10le" }
+                    else if o.output_bit_depth == 10 { "yuv420p10le" }
+                    else { "yuv420p" };
+                video_filters.push(format!("format={format}"));
+                if format.ends_with("10le") {
                     video_filters.push("limiter=min=64:max=940".into());
                 } else {
                     video_filters.push("limiter=min=16:max=235".into());
                 }
             }
             if o.denoise { video_filters.push("hqdn3d=1.5:1.5:6:6".into()); }
+            if o.video_nlmeans_strength > 0 {
+                let r = if o.video_nlmeans_strength >= 8 { 6 }
+                    else if o.video_nlmeans_strength >= 4 { 4 } else { 2 };
+                video_filters.push(format!("nlmeans=s={}:p=3:r={r}:pc=0", o.video_nlmeans_strength));
+            }
+            if o.video_detail_amount != 0 {
+                video_filters.push(format!("smartblur=1.0:{:.1}", -(o.video_detail_amount as f32) / 10.0));
+            }
+            if o.video_grain_amount >= 5 {
+                video_filters.push(format!("noise=c0s={}:c1s=0:c2s=0:c3s=0:c0f=t+u",
+                    o.video_grain_amount / 5));
+            }
+            if o.video_deflicker_amount > 0 {
+                let frames = ((128 * o.video_deflicker_amount as u32 + 99) / 100 + 1);
+                video_filters.push(format!("deflicker=s={frames}"));
+            }
             if o.crop_width > 0 {
                 video_filters.push(format!("crop={}:{}:{}:{}", o.crop_width, o.crop_height, o.crop_x, o.crop_y));
             }
@@ -981,7 +1010,10 @@ mod tests {
             frame_rate: 0, frame_rate_numerator: 0, frame_rate_denominator: 1, crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
             rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
             audio_stream: -1, subtitle_stream: -1, video_stream: 0,
-            deinterlace: false, broadcast_video_limiter: false, denoise: false, sharpen: false,
+            deinterlace: false, broadcast_video_limiter: false,
+            video_detail_amount: 0, video_grain_amount: 0,
+            video_nlmeans_strength: 0, video_deflicker_amount: 0,
+            denoise: false, sharpen: false,
             brightness: 0.0, contrast: 1.0, saturation: 1.0, gamma: 1.0,
             audio_channels: 0, audio_sample_rate: 0, audio_gain_db: 0.0, audio_offset_seconds: 0.0, audio_highpass_hz: 0, audio_lowpass_hz: 0, audio_equalizer_db: 0.0, audio_equalizer_hz: 1000, audio_eq_bands_db: [0.0; 5],
             output_dir: None, ffmpeg: PathBuf::from("ffmpeg") }
