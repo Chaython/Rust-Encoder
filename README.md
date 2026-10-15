@@ -63,6 +63,10 @@ Video functions now support **constant-quality (CRF) or target-bitrate** encodin
 
 For identical output quality, speed settings change encoding time and compression efficiency rather than promising a universal speedup; the hardware backend and video filters remain performance bottlenecks. Estimates based on input duration and video/audio bitrates are approximate, not guarantees. Existing JSON profiles load with backward-compatible defaults.
 
+## Basic audio frequency filters
+
+The encoding settings now include independent high-pass and low-pass cutoffs (20–20,000 Hz, with 0 disabling either filter). These use FFmpeg's `highpass` and `lowpass` audio filters, and reject combinations where the high-pass frequency is at or above the low-pass frequency. This is basic frequency filtering, not full Shutter Encoder graphic equalizer parity.
+
 ## Audio synchronization offset
 
 Encoding presets now support a signed **audio offset in seconds**. Positive values delay audio using FFmpeg `adelay`; negative values advance audio by trimming its beginning and resetting timestamps. This requires an enabled, re-encoded audio stream. Shutter Encoder `.enc` audio-offset frame counts import only when an explicit conform FPS is available; without a known source timebase the importer warns instead of guessing. This is a timing adjustment, not full per-track audio routing.
