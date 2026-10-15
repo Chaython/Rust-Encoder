@@ -1379,6 +1379,10 @@ impl EncoderApp {
                         self.settings.audio_stream != -2 && self.settings.normalize_audio,
                         egui::DragValue::new(&mut self.settings.normalization_target_lufs)
                             .range(-31..=-5)).changed();
+                    ui.label("Audio offset (seconds; + delay / - advance)");
+                    changed |= ui.add_enabled(self.settings.audio_stream != -2,
+                        egui::DragValue::new(&mut self.settings.audio_offset_seconds)
+                            .range(-600.0..=600.0).speed(0.01)).changed();
                     ui.label("Audio fade-in (seconds, 0 = off)");
                     changed |= ui.add_enabled(self.settings.audio_stream != -2,
                         egui::DragValue::new(&mut self.settings.audio_fade_in_seconds)
@@ -1765,6 +1769,7 @@ fn sanitize_codec_settings(settings: &mut Settings) {
         || settings.audio_stream == -2 {
         settings.audio_fade_in_seconds = 0.0;
         settings.audio_fade_out_seconds = 0.0;
+        settings.audio_offset_seconds = 0.0;
     }
     if !settings.use_video_bitrate {
         settings.max_video_bitrate_kbps = 0;
