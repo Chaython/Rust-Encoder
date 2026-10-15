@@ -1980,6 +1980,22 @@ mod tests {
     }
 
     #[test]
+    fn fade_controls_are_reset_for_incompatible_functions() {
+        let mut settings = Settings::default();
+        settings.audio_fade_in_seconds = 2.0;
+        settings.video_fade_in_seconds = 3.0;
+        sanitize_codec_settings(&mut settings);
+        assert_eq!(settings.audio_fade_in_seconds, 2.0);
+        assert_eq!(settings.video_fade_in_seconds, 3.0);
+        settings.audio_stream = -2;
+        sanitize_codec_settings(&mut settings);
+        assert_eq!(settings.audio_fade_in_seconds, 0.0);
+        assert_eq!(settings.video_fade_in_seconds, 3.0);
+        settings.preset = Preset::RemuxMkv;
+        sanitize_codec_settings(&mut settings);
+        assert_eq!(settings.video_fade_in_seconds, 0.0);
+    }
+    #[test]
     fn vp9_profile_two_preserves_depth_but_not_unsupported_hdr_tags() {
         let mut settings = Settings::default();
         settings.preset = Preset::Vp9;
