@@ -197,6 +197,14 @@ pub struct Settings {
     pub deinterlace: bool,
     #[serde(default)]
     pub broadcast_video_limiter: bool,
+    #[serde(default)]
+    pub video_detail_amount: i8, // Shutter detail slider -10..10 (smartblur)
+    #[serde(default)]
+    pub video_grain_amount: u8, // Shutter grain slider 0..100
+    #[serde(default)]
+    pub video_nlmeans_strength: u8, // Shutter NLMeans strength 0..10
+    #[serde(default)]
+    pub video_deflicker_amount: u8, // Shutter exposure smoothing 0..100
     pub denoise: bool,
     pub sharpen: bool,
     pub brightness: f32, // -1.0..1.0
@@ -242,7 +250,9 @@ impl Default for Settings {
             crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
             rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
             audio_stream: -1, subtitle_stream: -1, video_stream: 0,
-            deinterlace: false, broadcast_video_limiter: false, denoise: false, sharpen: false,
+            deinterlace: false, broadcast_video_limiter: false, video_detail_amount: 0,
+            video_grain_amount: 0, video_nlmeans_strength: 0,
+            video_deflicker_amount: 0, denoise: false, sharpen: false,
             brightness: 0.0, contrast: 1.0, saturation: 1.0, gamma: 1.0,
             audio_channels: 0, audio_sample_rate: 0, audio_gain_db: 0.0, audio_offset_seconds: 0.0, audio_highpass_hz: 0, audio_lowpass_hz: 0, audio_equalizer_db: 0.0, audio_equalizer_hz: 1000, audio_eq_bands_db: [0.0; 5],
             output_dir: String::new(),
@@ -293,6 +303,10 @@ pub struct EncodeOptions {
     pub video_stream: u32, // zero-based track index
     pub deinterlace: bool,
     pub broadcast_video_limiter: bool,
+    pub video_detail_amount: i8, // Shutter detail slider -10..10 (smartblur)
+    pub video_grain_amount: u8, // Shutter grain slider 0..100
+    pub video_nlmeans_strength: u8, // Shutter NLMeans strength 0..10
+    pub video_deflicker_amount: u8, // Shutter exposure smoothing 0..100
     pub denoise: bool,
     pub sharpen: bool,
     pub brightness: f32, // -1.0..1.0
@@ -341,7 +355,11 @@ impl Settings {
             flip_horizontal: self.flip_horizontal, flip_vertical: self.flip_vertical,
             audio_stream: self.audio_stream, subtitle_stream: self.subtitle_stream,
             video_stream: self.video_stream,
-            deinterlace: self.deinterlace, broadcast_video_limiter: self.broadcast_video_limiter, denoise: self.denoise, sharpen: self.sharpen,
+            deinterlace: self.deinterlace, broadcast_video_limiter: self.broadcast_video_limiter,
+            video_detail_amount: self.video_detail_amount,
+            video_grain_amount: self.video_grain_amount,
+            video_nlmeans_strength: self.video_nlmeans_strength,
+            video_deflicker_amount: self.video_deflicker_amount, denoise: self.denoise, sharpen: self.sharpen,
             brightness: self.brightness, contrast: self.contrast,
             saturation: self.saturation, gamma: self.gamma,
             audio_channels: self.audio_channels, audio_sample_rate: self.audio_sample_rate,
