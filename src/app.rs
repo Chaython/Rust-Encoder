@@ -2104,6 +2104,23 @@ mod tests {
         assert_eq!(settings.video_fade_in_seconds, 0.0);
     }
     #[test]
+    fn imported_video_effects_are_cleared_for_audio_and_copy_modes() {
+        let mut settings = Settings::default();
+        settings.video_detail_amount = 5;
+        settings.video_grain_amount = 30;
+        settings.video_nlmeans_strength = 7;
+        settings.video_deflicker_amount = 25;
+        sanitize_codec_settings(&mut settings);
+        assert_eq!(settings.video_detail_amount, 5);
+        assert_eq!(settings.video_nlmeans_strength, 7);
+        settings.preset = Preset::Wav;
+        sanitize_codec_settings(&mut settings);
+        assert_eq!(settings.video_detail_amount, 0);
+        assert_eq!(settings.video_grain_amount, 0);
+        assert_eq!(settings.video_nlmeans_strength, 0);
+        assert_eq!(settings.video_deflicker_amount, 0);
+    }
+    #[test]
     fn vp9_profile_two_preserves_depth_but_not_unsupported_hdr_tags() {
         let mut settings = Settings::default();
         settings.preset = Preset::Vp9;
