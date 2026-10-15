@@ -1371,6 +1371,24 @@ mod tests {
     }
 
     #[test]
+    fn highpass_lowpass_filters_are_validated_and_encoded() {
+        let dir = std::env::temp_dir().join(format!("rust-encoder-eq-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("source.wav");
+        fs::write(&input, b"fixture").unwrap();
+        let mut o = options(Preset::Wav);
+        o.audio_highpass_hz = 80;
+        o.audio_lowpass_hz = 12_000;
+        let args = build_args(&input, &dir.join("out.wav"), &o).unwrap();
+        assert!(args.windows(2).any(|p| p[0] == "-af"
+            && p[1].to_string_lossy().contains("highpass=f=80,lowpass=f=12000")));
+        o.audio_highpass_hz = 16_000;
+        assert!(validate_options(&o).is_err());
+        o.audio_highpass_hz = 19;
+        assert!(validate_options(&o).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn audio_offsets_generate_delay_or_trim_filters() {
         let dir = std::env::temp_dir().join(format!("rust-encoder-offset-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
