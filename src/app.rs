@@ -2410,6 +2410,51 @@ mod tests {
         assert_eq!(settings.video_fade_in_seconds, 0.0);
     }
     #[test]
+    fn queue_cut_clips_preserves_each_range_and_skips_full_export() {
+        let mut app = EncoderApp::new();
+        app.settings.preset = Preset::H264;
+        let mut source = dummy_job(100, JobState::Queued, Preset::H264);
+        source.media = Some(MediaInfo {
+            duration_sec: Some(10.0),
+            video_tracks: vec![Default::default()],
+            ..Default::default()
+        });
+        app.jobs.push(source);
+        app.selected_job = Some(100);
+        app.next_id = 101;
+        assert_eq!(app.queue_clip_ranges(&[(1.0, 3.0), (3.0, 9.0)]).unwrap(), 2);
+        assert_eq!(app.jobs.len(), 3);
+        assert!(matches!(app.jobs[0].status, JobState::Cancelled));
+        assert_eq!(app.jobs[1].trim_override, Some((1.0, 3.0)));
+        assert_eq!(app.jobs[2].trim_override, Some((3.0, 9.0)));
+        assert_eq!(app.jobs[2].options.end_seconds, 9.0);
+        // Codec/preset changes must not silently reset frozen cut boundaries.
+        app.settings.quality = 19;
+        app.mark_settings_changed();
+        assert_eq!(app.jobs[1].options.quality, 19);
+        assert_eq!(app.jobs[1].options.start_seconds, 1.0);
+        assert_eq!(app.jobs[1].options.end_seconds, 3.0);
+        assert_eq!(app.jobs[2].options.start_seconds, 3.0);
+        assert_eq!(app.jobs[2].options.end_seconds, 9.0);
+        assert_eq!(app.queue_clip_ranges(&[(9.9999, 10.0)]).unwrap_err(),
+            "Clip bounds must be within the source and at least 1 ms long");
+    }
+
+    #[test]
+    fn cut_queue_refuses_invalid_ranges_without_mutating_source() {
+        let mut app = EncoderApp::new();
+        let mut source = dummy_job(25, JobState::Queued, Preset::H264);
+        source.media = Some(MediaInfo { duration_sec: Some(8.0), ..Default::default() });
+        app.jobs.push(source);
+        app.selected_job = Some(25);
+        for bounds in [[0.0, 0.0], [-1.0, 2.0], [1.0, 9.0], [f64::NAN, 2.0]] {
+            assert!(app.queue_clip_ranges(&[(bounds[0], bounds[1])]).is_err());
+        }
+        assert_eq!(app.jobs.len(), 1);
+        assert!(matches!(app.jobs[0].status, JobState::Queued));
+    }
+
+    #[test]
     fn batch_validates_video_subtitle_and_analysis_tracks_before_ffmpeg() {
         let mut s = Settings::default();
         let mut info = MediaInfo::default();
