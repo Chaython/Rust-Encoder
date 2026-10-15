@@ -22,7 +22,7 @@
 
 ## Known limitations
 
-No realtime video player, synchronized waveform/editor timeline, bulk image sequences, complete HDR/color/subtitle workflows, AI/media utility integrations, or full original feature equivalence. A one-pass `loudnorm` filter does not guarantee a measured integrated loudness target. Hardware encoders require compatible FFmpeg binaries and may not support software encoder settings.
+Embedded FFmpeg playback exists but timestamp-accurate synchronized A/V, frame-perfect multi-cut EDL/concatenation, bulk image sequences, complete HDR/color/subtitle workflows, AI/media utilities and full original feature equivalence remain incomplete. A one-pass `loudnorm` filter does not guarantee a measured integrated loudness target. Hardware encoders require compatible FFmpeg binaries and may not support software encoder settings.
 
 ## Additional color and audio parity regression coverage
 
@@ -35,6 +35,16 @@ No realtime video player, synchronized waveform/editor timeline, bulk image sequ
 - Rust tests validate FFmpeg float PCM arguments, seek/trimming and selected audio-track routing; an additional test confirms the playback clock excludes underrun silence; a nonblocking audio Source test checks that the callback cannot stall waiting for FFmpeg data. Additional tests cover short final PCM blocks, malformed partial sample frames and EOF.
 - Linux generated-media integration tests also validate FFmpeg decodes real audio into 48 kHz two-channel f32le samples. Hardware output is **not** tested in headless CI.
 - Manual testing must cover Windows WASAPI, macOS CoreAudio, Linux ALSA/Pulse/PipeWire, volume, rapid seeking, device removal, video-only files, audio-only embedded playback, PCM files shorter than the prebuffer threshold, and variable-frame-rate A/V synchronization. Specifically verify Pause/Resume across the In/Out range, and audio finishing after the last video frame. In-app synchronization remains approximate; FFplay is the fallback.
+
+## Default embedded playback and cut toolbar regression plan
+
+- Primary **Play** must use the resolved FFmpeg path, including automatically managed FFmpeg when FFplay is absent; **External playback** must be clearly identified as optional FFplay. Verify actual picture and native audio, start/restart/pause/resume/stop, stop on source selection change, audio-only files, and correct error messages for missing audio devices.
+- Confirm video is centered in its preview stage at wide, medium and narrow layouts, without stretching its aspect ratio, clipping timeline tools or creating a 190-pixel high thumbnail.
+- Test timeline seeking via scrubbing, ±5 seconds, frame back/forward, jump to selection start/end, Mark In/Out, Go In/Out, Undo marks, Clear In/Out, Trim before and Trim after. Check zero length, end-of-file, invalid/NaN bounds and active playback cancellation during a seek.
+- Queue one marked clip and split at the playhead. Verify two independently encoded clips, correct precise trim ranges, source remains untouched, no accidental full-length export, collision-safe distinct output filenames, and the original unmodified queued job is skipped.
+- Change codecs and other shared settings after adding multiple cut clips; their individual In/Out ranges must survive updates and retries. Select the queued cut clips and confirm the embedded player honors their locked bounds.
+- Stream-copy cuts have keyframe limitations; compare the actual outputs against re-encoded cuts and document precision differences.
+- CI unit tests cover cut range validation, queued clip preservation and locked-bound migration. Live desktop interaction and actual GUI/AV output still need manual validation.
 
 ## Playback clock queue and video/audio EOF handling
 - Deterministic tests cover holding the first future video frame until its audio deadline and draining to the latest frame in video-only playback.
