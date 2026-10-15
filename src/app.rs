@@ -1218,58 +1218,129 @@ impl EncoderApp {
                     self.stop_native_video();
                     ui.ctx().request_repaint();
                 }
-                let frame_step = 1.0 / info.video_frame_rate.unwrap_or(30.0);
+                let frame_step = 1.0 / info.video_frame_rate.unwrap_or(30.0).max(1.0);
                 let mut seek_changed = false;
                 ui.horizontal_wrapped(|ui| {
-                    if ui.add_enabled(info.video_codec.is_some(), egui::Button::new(
-                        if self.preview_playing { "⏸ Pause" } else { "▶ Preview" }
-                    )).clicked() {
-                        if !self.preview_playing && self.preview_seconds >= end {
-                            self.preview_seconds = start;
-                            self.preview_requested_seconds = start;
-                        }
-                        self.stop_native_video();
-                        self.preview_playing = !self.preview_playing;
-                        self.preview_last_tick = Instant::now();
+                    if ui.button("⏮ Start").on_hover_text("Seek to the start of the marked range").clicked() {
+                        self.preview_seconds = start;
+                        seek_changed = true;
                     }
-                    if ui.add_enabled(info.video_codec.is_some(), egui::Button::new("◀ Frame")).clicked() {
+                    if ui.button("−5s").clicked() {
+                        self.preview_seconds = (self.preview_seconds - 5.0).max(0.0);
+                        seek_changed = true;
+                    }
+                    if ui.add_enabled(info.video_codec.is_some(),
+                        egui::Button::new("◀ Frame")).on_hover_text("Previous video frame").clicked() {
                         self.preview_seconds = (self.preview_seconds - frame_step).max(0.0);
                         seek_changed = true;
                     }
-                    if ui.add_enabled(info.video_codec.is_some(), egui::Button::new("Frame ▶")).clicked() {
+                    if ui.add_enabled(info.video_codec.is_some(),
+                        egui::Button::new("Frame ▶")).on_hover_text("Next video frame").clicked() {
                         self.preview_seconds = (self.preview_seconds + frame_step).min(duration);
                         seek_changed = true;
                     }
-                    ui.label(format!("{:.2}s / {:.2}s", self.preview_seconds, duration));
+                    if ui.button("+5s").clicked() {
+                        self.preview_seconds = (self.preview_seconds + 5.0).min(duration);
+                        seek_changed = true;
+                    }
+                    if ui.button("End ⏭").on_hover_text("Seek to the end of the marked range").clicked() {
+                        self.preview_seconds = end;
+                        seek_changed = true;
+                    }
+                    ui.label(format!("{:.3}s / {:.3}s", self.preview_seconds, duration));
                 });
                 ui.horizontal_wrapped(|ui| {
-                    if ui.button("Mark In").clicked() {
-                        self.settings.start_seconds = self.preview_seconds;
+                    if ui.button("Mark In").on_hover_text("Set start of retained clip at playhead").clicked() {
+                        self.cut_undo = self.selected_job.map(|id|
+                            (id, self.settings.start_seconds, self.settings.end_seconds));
+                        self.settings.start_seconds = self.preview_seconds.min((duration - 0.001).max(0.0));
                         if self.settings.end_seconds > 0.0
                             && self.settings.end_seconds <= self.settings.start_seconds {
                             self.settings.end_seconds = 0.0;
                         }
                         self.mark_settings_changed();
                     }
-                    if ui.button("Mark Out").clicked() {
-                        if self.preview_seconds > self.settings.start_seconds {
-                            self.settings.end_seconds = self.preview_seconds;
+                    if ui.button("Mark Out").on_hover_text("Set end of retained clip at playhead").clicked() {
+                        if self.preview_seconds - self.settings.start_seconds >= 0.001 {
+                            self.cut_undo = self.selected_job.map(|id|
+                                (id, self.settings.start_seconds, self.settings.end_seconds));
+                            self.settings.end_seconds = self.preview_seconds.min(duration);
                             self.mark_settings_changed();
                         } else {
-                            self.notice = "Out point must be after the In point".into();
+                            self.notice = "Move at least 1 ms after the In point to mark Out.".into();
+                        }
+                    }
+                    if ui.button("Go In").clicked() {
+                        self.preview_seconds = start;
+                        seek_changed = true;
+                    }
+                    if ui.button("Go Out").clicked() {
+                        self.preview_seconds = end;
+                        seek_changed = true;
+                    }
+                    if ui.add_enabled(self.cut_undo.as_ref().is_some_and(|(id, _, _)|
+                        Some(*id) == self.selected_job), egui::Button::new("↶ Undo marks")
+                    ).clicked() {
+                        if let Some((_, before, after)) = self.cut_undo.take() {
+                            self.settings.start_seconds = before;
+                            self.settings.end_seconds = after;
+                            self.mark_settings_changed();
                         }
                     }
                     if ui.button("Clear In/Out").clicked() {
+                        self.cut_undo = self.selected_job.map(|id|
+                            (id, self.settings.start_seconds, self.settings.end_seconds));
                         self.settings.start_seconds = 0.0;
                         self.settings.end_seconds = 0.0;
                         self.mark_settings_changed();
                     }
-                    ui.small(format!("Selection: {:.2}–{:.2}s", start, end));
+                    ui.small(format!("Keep: {:.3}–{:.3}s", start, end));
+                });
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Trim before playhead").on_hover_text("Discard everything before this point in the current trim").clicked() {
+                        self.cut_undo = self.selected_job.map(|id|
+                            (id, self.settings.start_seconds, self.settings.end_seconds));
+                        self.settings.start_seconds = self.preview_seconds.min((end - 0.001).max(0.0));
+                        self.mark_settings_changed();
+                    }
+                    if ui.button("Trim after playhead").on_hover_text("Discard everything after this point in the current trim").clicked() {
+                        if self.preview_seconds - start >= 0.001 {
+                            self.cut_undo = self.selected_job.map(|id|
+                                (id, self.settings.start_seconds, self.settings.end_seconds));
+                            self.settings.end_seconds = self.preview_seconds.min(duration);
+                            self.mark_settings_changed();
+                        } else {
+                            self.notice = "Move after In before trimming the right side.".into();
+                        }
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    let has_marked_range = self.settings.end_seconds > self.settings.start_seconds;
+                    if ui.add_enabled(has_marked_range,
+                        egui::Button::new("＋ Queue selected cut")).on_hover_text(
+                        "Export the marked range as a separate file; skip the original full-length queued export"
+                    ).clicked() {
+                        if let Err(error) = self.queue_clip_ranges(&[(start, end)]) {
+                            self.notice = error;
+                        }
+                    }
+                    let split = self.preview_seconds;
+                    let splittable = split - start >= 0.001 && end - split >= 0.001;
+                    if ui.add_enabled(splittable,
+                        egui::Button::new("✂ Split at playhead")).on_hover_text(
+                        "Create two independently encoded queued clips; they are not joined"
+                    ).clicked() {
+                        if let Err(error) = self.queue_clip_ranges(&[(start, split), (split, end)]) {
+                            self.notice = error;
+                        }
+                    }
+                    ui.small("Cuts export as separate files. Stream-copy cuts are keyframe-inexact.");
                 });
                 if seek_changed {
                     self.stop_native_video();
                     self.preview_requested_seconds = self.preview_seconds;
                     self.preview_playing = false;
+                    ui.ctx().request_repaint();
                 }
                 if self.preview_playing { ui.ctx().request_repaint_after(Duration::from_millis(50)); }
             }
@@ -1284,7 +1355,7 @@ impl EncoderApp {
                 }
             });
         }
-        ui.small("The embedded FFmpeg player is the default. A/V synchronization is approximate; FFplay remains an optional external fallback.");
+        ui.small("Embedded playback uses FFmpeg. In/Out marks, frame seek, Undo, queue clip and split are available above. Splits export separate clips (not a joined EDL); stream-copy cuts are keyframe-inexact.");
     }
 
     fn function_ui(&mut self, ui: &mut egui::Ui) {
