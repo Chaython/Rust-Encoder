@@ -68,6 +68,8 @@ fn conversion_preview_audio_and_remux_finish() {
             options.audio_channels = 1;
             options.audio_sample_rate = 48_000;
             options.audio_gain_db = -2.5;
+            options.audio_fade_in_seconds = 0.25;
+            options.video_fade_in_seconds = 0.25;
         }
         if preset == Preset::Flac {
             options.audio_channels = 2;
