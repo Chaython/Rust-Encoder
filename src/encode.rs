@@ -113,6 +113,9 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     if options.audio_sample_rate != 0 && !(8_000..=192_000).contains(&options.audio_sample_rate) {
         return Err("Sample rate must be 0 (source) or 8000–192000 Hz".into());
     }
+    if !(-31..=-5).contains(&options.normalization_target_lufs) {
+        return Err("Normalization target must be between -31 and -5 LUFS".into());
+    }
     if !options.audio_gain_db.is_finite() || !(-30.0..=30.0).contains(&options.audio_gain_db) {
         return Err("Audio gain must be finite and between -30 and +30 dB".into());
     }
@@ -197,7 +200,9 @@ pub fn expected_duration(info: &MediaInfo, settings: &EncodeOptions) -> Option<f
 fn audio_filters(o: &EncodeOptions) -> Vec<String> {
     let mut filters = Vec::new();
     if o.audio_gain_db != 0.0 { filters.push(format!("volume={:.2}dB", o.audio_gain_db)); }
-    if o.normalize_audio { filters.push("loudnorm=I=-16:TP=-1.5:LRA=11".into()); }
+    if o.normalize_audio {
+        filters.push(format!("loudnorm=I={}:TP=-1.5:LRA=11", o.normalization_target_lufs));
+    }
     if o.audio_fade_in_seconds > 0.0 {
         filters.push(format!("afade=t=in:st=0:d={:.3}", o.audio_fade_in_seconds));
     }
@@ -913,7 +918,7 @@ mod tests {
             max_video_bitrate_kbps: 0, encoder_speed: 1, encoder_threads: 0,
             keyframe_interval: 0, faststart: true,
             target_width: 0, audio_bitrate_kbps: 192,
-            start_seconds: 0.0, end_seconds: 0.0, normalize_audio: false,
+            start_seconds: 0.0, end_seconds: 0.0, normalize_audio: false, normalization_target_lufs: -16,
             audio_fade_in_seconds: 0.0, video_fade_in_seconds: 0.0,
             audio_fade_out_seconds: 0.0, video_fade_out_seconds: 0.0,
             hardware_encoder: HardwareEncoder::Software,
