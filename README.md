@@ -65,7 +65,7 @@ For identical output quality, speed settings change encoding time and compressio
 
 ## Basic audio frequency filters
 
-The encoding settings now include independent high-pass and low-pass cutoffs (20–20,000 Hz, with 0 disabling either filter). These use FFmpeg's `highpass` and `lowpass` audio filters, and reject combinations where the high-pass frequency is at or above the low-pass frequency. The encoder also provides a single-band parametric EQ (20–20,000 Hz center, -24 to +24 dB gain) using FFmpeg's `equalizer` filter. The encoder also offers five independent graphic EQ bands at 100, 300, 1000, 3000 and 10000 Hz (each ±24 dB), chained through FFmpeg equalizer filters. Full Shutter Encoder EQ parity—matching its precise band frequencies, widths and preset transfer curves—still needs testing and implementation.
+The encoding settings now include independent high-pass and low-pass cutoffs (20–20,000 Hz, with 0 disabling either filter). These use FFmpeg's `highpass` and `lowpass` audio filters, and reject combinations where the high-pass frequency is at or above the low-pass frequency. The encoder also provides a single-band parametric EQ (20–20,000 Hz center, -24 to +24 dB gain) using FFmpeg's `equalizer` filter. The encoder also offers five independent graphic EQ bands at 100, 300, 1000, 3000 and 10000 Hz (each ±24 dB), chained through FFmpeg equalizer filters. Full Shutter Encoder EQ parity—matching its precise band frequencies, widths and preset transfer curves—still needs testing and implementation. The importer also flags Shutter's video-level `caseLimiter` as unsupported; it is not an audio dynamics limiter.
 
 ## Audio synchronization offset
 
