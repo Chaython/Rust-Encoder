@@ -65,6 +65,32 @@ struct Running {
     stopped: Arc<AtomicBool>,
 }
 
+/// Reject per-file routing mistakes before starting FFmpeg. Batch queues
+/// can contain files with different audio track counts.
+fn validate_audio_tracks_in_job(options: &EncodeOptions, count: usize) -> Result<(), String> {
+    if !(options.preset.video() || options.preset.audio_only()) { return Ok(()); }
+    if options.preset.audio_only() && count == 0 {
+        return Err("This file has no audio tracks to encode".into());
+    }
+    if options.audio_stream >= 0 && options.audio_stream as usize >= count {
+        return Err(format!("Audio track #{} does not exist (this file has {count} audio tracks)",
+            options.audio_stream));
+    }
+    if options.audio_mix_secondary_stream >= 0 {
+        if options.audio_stream < 0 {
+            return Err("Select a specific primary audio track before mixing".into());
+        }
+        if options.audio_mix_secondary_stream == options.audio_stream {
+            return Err("Cannot mix an audio track with itself".into());
+        }
+        if options.audio_mix_secondary_stream as usize >= count {
+            return Err(format!("Secondary audio track #{} does not exist (this file has {count} audio tracks)",
+                options.audio_mix_secondary_stream));
+        }
+    }
+    Ok(())
+}
+
 pub struct EncoderApp {
     settings: Settings,
     jobs: Vec<Job>,
@@ -420,6 +446,12 @@ impl EncoderApp {
         if !matches!(self.dependency_state, DependencyState::Ready { .. }) { return; }
         if !self.process_queue || self.current.is_some() { return; }
         if let Some(job) = self.jobs.iter_mut().find(|j| matches!(j.status, JobState::Queued)) {
+            if let Some(info) = job.media.as_ref() {
+                if let Err(message) = validate_audio_tracks_in_job(&job.options, info.audio_tracks.len()) {
+                    job.status = JobState::Failed(message);
+                    return;
+                }
+            }
             let flag = Arc::new(AtomicBool::new(false));
             let stopped = Arc::new(AtomicBool::new(false));
             job.status = JobState::Running;
@@ -2142,6 +2174,25 @@ mod tests {
         settings.preset = Preset::RemuxMkv;
         sanitize_codec_settings(&mut settings);
         assert_eq!(settings.video_fade_in_seconds, 0.0);
+    }
+    #[test]
+    fn batch_mix_selection_rejects_missing_secondary_tracks_before_ffmpeg() {
+        let mut s = Settings::default();
+        s.audio_stream = 0;
+        s.audio_mix_secondary_stream = 1;
+        let opts = s.encode_options();
+        assert!(validate_audio_tracks_in_job(&opts, 2).is_ok());
+        assert!(validate_audio_tracks_in_job(&opts, 1).unwrap_err().contains("Secondary"));
+        assert!(validate_audio_tracks_in_job(&opts, 0).is_err());
+
+        s.audio_stream = 3;
+        s.audio_mix_secondary_stream = -1;
+        assert!(validate_audio_tracks_in_job(&s.encode_options(), 2).unwrap_err().contains("#3"));
+        s.preset = Preset::Wav;
+        s.audio_stream = -1;
+        assert!(validate_audio_tracks_in_job(&s.encode_options(), 0).is_err());
+        s.preset = Preset::RemuxMkv;
+        assert!(validate_audio_tracks_in_job(&s.encode_options(), 0).is_ok());
     }
     #[test]
     fn mixing_requires_specific_audio_tracks_and_resets_on_stream_copy() {
