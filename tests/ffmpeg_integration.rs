@@ -327,6 +327,43 @@ fn vp9_ten_bit_profile_two_roundtrip() {
 }
 
 #[test]
+fn separate_cut_clips_have_expected_audio_durations() {
+    if !ffmpeg_available()
+        || Command::new("ffprobe").arg("-version").output().is_err() {
+        eprintln!("Skipping cut integration: FFmpeg/FFprobe unavailable");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!(
+        "rust-encoder-cut-e2e-{}-{:?}", std::process::id(), std::thread::current().id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("source.wav");
+    command_ok(Command::new("ffmpeg").args([
+        "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=2",
+        "-c:a", "pcm_s16le",
+    ]).arg(&source));
+    for (index, (start, end)) in [(0.25, 0.80), (0.80, 1.60)].into_iter().enumerate() {
+        let destination = dir.join(format!("cut-{index}.wav"));
+        let mut clip = options(Preset::Wav);
+        clip.start_seconds = start;
+        clip.end_seconds = end;
+        command_ok(Command::new("ffmpeg")
+            .args(encode::build_args(&source, &destination, &clip).unwrap()));
+        let probe = Command::new("ffprobe")
+            .args(["-v", "error", "-show_entries", "format=duration",
+                   "-of", "default=nokey=1:noprint_wrappers=1"])
+            .arg(&destination).output().unwrap();
+        assert!(probe.status.success());
+        let actual = String::from_utf8_lossy(&probe.stdout).trim()
+            .parse::<f64>().unwrap();
+        assert!((actual - (end - start)).abs() < 0.025,
+            "cut {index} expected {:.3}s but encoded {:.3}s", end - start, actual);
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn multiple_selected_audio_streams_mix_into_one_encodable_track() {
     if !ffmpeg_available()
         || Command::new("ffprobe").arg("-version").output().is_err() {
