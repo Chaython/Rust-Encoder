@@ -6,7 +6,7 @@ Rust-native desktop media converter and batch processing tool built with **egui/
 
 ## Available features
 
-- Desktop GUI with resize-friendly queue and settings, dark/light theme, drag/drop, file picker and per-file still-frame preview **with seek position** (not a realtime player).
+- Desktop GUI with resize-friendly queue and settings, dark/light theme, drag/drop, file picker, a centered **embedded FFmpeg player** with native audio playback where the output device supports it, a waveform and a trim/cut timeline.
 - Background FFprobe metadata inspection with video/audio/subtitle track listings (including language and channel count when available).
 - Queued jobs, batch execution, retry, pause-after-current, cancellation, FFmpeg progress, safe temporary outputs and non-overwriting filenames.
 - **23 functions:** H.264, H.265/HEVC, AV1, VP9, ProRes, DNxHR, MKV rewrap, MP4 rewrap, video-only stream copy, WAV, FLAC, MP3, AAC, Opus, PNG still, JPEG still, SRT subtitle extraction, ASS subtitle extraction, frame MD5 checksums, black-frame detection, frozen-frame detection, silence detection, and EBU R128 loudness analysis.
@@ -18,7 +18,7 @@ Rust-native desktop media converter and batch processing tool built with **egui/
 
 ## Dependencies
 
-Rust 1.95+ (build only); FFmpeg, FFprobe and optional FFplay **are not included** in the portable archives. Put them in PATH, beside the binary, or configure paths under *External tools*. A codec can only be used if present in that FFmpeg build. Consult FFmpeg/codec licensing before redistributing binaries.
+Rust 1.95+ (build only); FFmpeg, FFprobe and optional FFplay **are not included** in the portable archives. FFmpeg and FFprobe can be downloaded automatically on app startup; FFplay is optional and not required for the main Play button. Otherwise put the executables in PATH, beside the binary, or configure paths under *External tools*. A codec can only be used if present in that FFmpeg build. Consult FFmpeg/codec licensing before redistributing binaries.
 
 ## Build and test
 
@@ -62,6 +62,14 @@ The desktop layout is adaptive, with draggable pane handles whose proportions pe
 Video functions now support **constant-quality (CRF) or target-bitrate** encoding (including optional real two-pass software H.264/H.265/VP9), a configurable optional peak bitrate/buffer, Fast/Balanced/Quality software encoder speed, a CPU thread limit, adjustable GOP/keyframe interval and MP4 faststart toggle. AV1, VP9, x264 and x265 use codec-appropriate speed controls. NVENC target-bitrate encoding explicitly selects VBR rate control; NVENC constant-quality mode uses CQ with VBR and zero average bitrate. Actual encoder support still depends on driver and FFmpeg version. Hardware choices are probed asynchronously when FFmpeg becomes available: a codec must be listed and must successfully encode a one-frame test clip on the actual device/driver before it is selectable. The GUI supports rescanning after hardware or FFmpeg changes. Target-bitrate support still depends on hardware and driver capabilities.
 
 For identical output quality, speed settings change encoding time and compression efficiency rather than promising a universal speedup; the hardware backend and video filters remain performance bottlenecks. Estimates based on input duration and video/audio bitrates are approximate, not guarantees. Existing JSON profiles load with backward-compatible defaults.
+
+## Embedded playback and cut controls
+
+**Play** now decodes through the same configured, bundled or automatically managed **FFmpeg** used by embedded preview. It does **not** require FFplay. The video is enlarged and centered within the preview pane. **Pause** retains the playhead for a decoder restart on **Resume**; **Stop** closes the embedded decoders. **External playback (optional FFplay)** remains available as a separately labeled fallback, and requires a working FFplay executable. Native audio output needs a supported device. Playback timestamps are approximate for some variable-frame-rate sources and do not yet have calibrated zero-drift A/V synchronization.
+
+Use the timeline to scrub, step backward/forward one frame (where video is present), jump back/forward five seconds, jump to the selected clip start/end, mark **In** and **Out**, **Go In/Out**, **Undo marks** and **Clear In/Out**. **Trim before/after playhead** adjusts the retained range without changing the input file.
+
+**Queue selected cut** exports a marked range as its own clip. **Split at playhead** queues the two ranges before/after the cursor as **two separate output files**. Both actions preserve the cut bounds per queued job, even if other encoder settings are changed afterward; the original full-length queued export is skipped to avoid accidental duplicate exports. The source media is never modified. Clips are encoded with the currently selected encoding or stream-copy preset. Stream-copy cutting is keyframe-inexact; encoded outputs can cut at decoded frame boundaries subject to timestamps and codec behavior. **These are separate clip exports, not multi-cut timeline concatenation or an EDL.** Video frame rate is estimated from FFprobe; variable-frame-rate sources need special care.
 
 ## Basic audio frequency filters
 
