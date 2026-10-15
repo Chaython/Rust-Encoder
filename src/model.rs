@@ -178,6 +178,10 @@ pub struct Settings {
     pub video_fade_out_seconds: f32,
     pub hardware_encoder: HardwareEncoder,
     pub frame_rate: u16, // 0 keeps the source frame rate
+    #[serde(default)]
+    pub frame_rate_numerator: u32, // 0 uses integer FPS; otherwise rational FPS
+    #[serde(default = "default_fps_denominator")]
+    pub frame_rate_denominator: u32,
     pub crop_width: u32, // 0 disables crop
     pub crop_height: u32,
     pub crop_x: u32,
@@ -218,7 +222,7 @@ impl Default for Settings {
             audio_bitrate_kbps: 192, start_seconds: 0.0, end_seconds: 0.0,
             normalize_audio: false, audio_fade_in_seconds: 0.0,
             video_fade_in_seconds: 0.0, audio_fade_out_seconds: 0.0, video_fade_out_seconds: 0.0,
-            hardware_encoder: HardwareEncoder::Software, frame_rate: 0,
+            hardware_encoder: HardwareEncoder::Software, frame_rate: 0, frame_rate_numerator: 0, frame_rate_denominator: 1,
             crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
             rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
             audio_stream: -1, subtitle_stream: -1, video_stream: 0,
@@ -258,6 +262,8 @@ pub struct EncodeOptions {
     pub video_fade_out_seconds: f32,
     pub hardware_encoder: HardwareEncoder,
     pub frame_rate: u16, // 0 keeps the source frame rate
+    pub frame_rate_numerator: u32, // 0 uses integer FPS; otherwise rational FPS
+    pub frame_rate_denominator: u32,
     pub crop_width: u32, // 0 disables crop
     pub crop_height: u32,
     pub crop_x: u32,
@@ -302,6 +308,8 @@ impl Settings {
             audio_fade_out_seconds: self.audio_fade_out_seconds,
             video_fade_out_seconds: self.video_fade_out_seconds,
             hardware_encoder: self.hardware_encoder, frame_rate: self.frame_rate,
+            frame_rate_numerator: self.frame_rate_numerator,
+            frame_rate_denominator: self.frame_rate_denominator,
             crop_width: self.crop_width, crop_height: self.crop_height,
             crop_x: self.crop_x, crop_y: self.crop_y,
             rotate_degrees: self.rotate_degrees,
@@ -396,3 +404,5 @@ mod tests {
         assert_eq!(b.target_width, 1280);
     }
 }
+
+fn default_fps_denominator() -> u32 { 1 }
