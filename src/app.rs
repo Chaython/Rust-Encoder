@@ -1014,11 +1014,21 @@ impl EncoderApp {
             ));
         }
         if let Some(texture) = &self.preview_texture {
-            let size = texture.size_vec2();
-            let factor = (ui.available_width() / size.x).min(190.0 / size.y).min(1.0);
-            ui.vertical_centered(|ui| {
-                ui.image((texture.id(), size * factor.max(0.1)));
-            });
+            // Center the picture in an adaptable viewing area instead of
+            // pinning a tiny 190 px thumbnail to the top of the preview.
+            let source = texture.size_vec2();
+            let viewer_width = ui.available_width().max(1.0);
+            let viewer_height = (viewer_width * 0.5625).clamp(180.0, 440.0);
+            let scale = (viewer_width / source.x).min(viewer_height / source.y);
+            let displayed = source * scale.max(0.01);
+            ui.allocate_ui_with_layout(
+                egui::vec2(viewer_width, viewer_height),
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| {
+                    ui.add_space(((viewer_height - displayed.y) * 0.5).max(0.0));
+                    ui.image((texture.id(), displayed));
+                },
+            );
         } else if let Some(error) = &self.preview_error {
             ui.small(error);
         } else if self.selected_job.is_some() {
