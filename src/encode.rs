@@ -210,7 +210,7 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     if !options.preset.video() && (
         options.frame_rate != 0 || options.frame_rate_numerator != 0 || options.crop_width != 0 || options.crop_height != 0 ||
         options.rotate_degrees != 0 || options.flip_horizontal || options.flip_vertical || options.target_width != 0
-        || options.deinterlace || options.denoise || options.sharpen
+        || options.deinterlace || options.broadcast_video_limiter || options.denoise || options.sharpen
         || options.brightness != 0.0 || options.contrast != 1.0
         || options.saturation != 1.0 || options.gamma != 1.0
     ) {
@@ -511,6 +511,15 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
                     (o.end_seconds - o.start_seconds - o.video_fade_out_seconds as f64).max(0.0), o.video_fade_out_seconds));
             }
             if o.deinterlace { video_filters.push("yadif=mode=send_frame:parity=auto:deint=all".into()); }
+            if o.broadcast_video_limiter {
+                // Shutter's limiter clamps legal-range luma/chroma rather
+                // than compressing audio peaks. Use 8/10-bit native levels.
+                if o.output_bit_depth == 10 {
+                    video_filters.push("limiter=min=64:max=940".into());
+                } else {
+                    video_filters.push("limiter=min=16:max=235".into());
+                }
+            }
             if o.denoise { video_filters.push("hqdn3d=1.5:1.5:6:6".into()); }
             if o.crop_width > 0 {
                 video_filters.push(format!("crop={}:{}:{}:{}", o.crop_width, o.crop_height, o.crop_x, o.crop_y));
@@ -972,7 +981,7 @@ mod tests {
             frame_rate: 0, frame_rate_numerator: 0, frame_rate_denominator: 1, crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
             rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
             audio_stream: -1, subtitle_stream: -1, video_stream: 0,
-            deinterlace: false, denoise: false, sharpen: false,
+            deinterlace: false, broadcast_video_limiter: false, denoise: false, sharpen: false,
             brightness: 0.0, contrast: 1.0, saturation: 1.0, gamma: 1.0,
             audio_channels: 0, audio_sample_rate: 0, audio_gain_db: 0.0, audio_offset_seconds: 0.0, audio_highpass_hz: 0, audio_lowpass_hz: 0, audio_equalizer_db: 0.0, audio_equalizer_hz: 1000, audio_eq_bands_db: [0.0; 5],
             output_dir: None, ffmpeg: PathBuf::from("ffmpeg") }
