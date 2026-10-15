@@ -146,6 +146,15 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
             } else { skipped.push(format!("Unsupported audio bitrate: {value}")); }
         }
     }
+    // The legacy UI stores codec overrides separately from the function.
+    // Never quietly load a different audio encoder than the saved choice.
+    if get("caseChangeAudioCodec") == Some("true") {
+        if let Some(codec) = get("comboAudioCodec") {
+            skipped.push(format!("Custom audio codec override requires manual review: {codec}"));
+        } else {
+            skipped.push("Custom audio codec override requires manual review".into());
+        }
+    }
     // Shutter's conform-FPS option is opt-in. Its fractional rates (e.g.
     // 23,98 and 29,97) cannot be represented by our integer FPS setting.
     // Never round them silently to a different cadence.
@@ -227,7 +236,7 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
     const MAPPED_CHECKBOXES: &[&str] = &[
         "caseNormalizeAudio", "caseFastStart", "caseGOP", "case2pass",
         "caseQMax", "caseForcerDesentrelacement", "caseConform", "caseSampleRate",
-        "caseRotate", "caseMiror",
+        "caseRotate", "caseMiror", "caseChangeAudioCodec",
         "caseAudioOffset", "caseAudioFadeIn", "caseAudioFadeOut",
         "caseVideoFadeIn", "caseVideoFadeOut", "caseMixAudio",
         "caseSplitAudio", "caseConvertAudioFramerate", "caseForceTune",
@@ -380,6 +389,16 @@ mod tests {
         assert_eq!(imported.settings.rotate_degrees, 270);
         assert!(imported.settings.flip_horizontal);
         assert!(!imported.skipped.iter().any(|v| v.contains("caseRotate") || v.contains("caseMiror")));
+    }
+    #[test]
+    fn reports_custom_audio_codec_override_instead_of_guessing() {
+        let xml = r#"<Shutter><Settings>
+          <Component><Name>comboFonctions</Name><Value>H.264</Value></Component>
+          <Component><Type>JCheckBox</Type><Name>caseChangeAudioCodec</Name><Value>true</Value></Component>
+          <Component><Name>comboAudioCodec</Name><Value>AC3</Value></Component>
+        </Settings></Shutter>"#;
+        let result = import_xml(xml, &Settings::default()).unwrap();
+        assert!(result.skipped.iter().any(|s| s.contains("AC3")));
     }
     #[test]
     fn refuses_unknown_function_and_entity_declaration() {
