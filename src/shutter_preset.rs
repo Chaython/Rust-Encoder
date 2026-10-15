@@ -437,6 +437,25 @@ mod tests {
         assert!(result.skipped.iter().any(|s| s.contains("caseLUTs")));
     }
     #[test]
+    fn converts_frame_based_fade_ins_only_with_known_conform_rate() {
+        let xml = |conform: bool| format!(
+            "<Shutter><Settings>
+              <Component><Name>comboFonctions</Name><Value>H.264</Value></Component>
+              <Component><Name>caseConform</Name><Value>{conform}</Value></Component>
+              <Component><Name>comboFPS</Name><Value>25</Value></Component>
+              <Component><Name>caseVideoFadeIn</Name><Value>true</Value></Component>
+              <Component><Name>spinnerVideoFadeIn</Name><Value>50</Value></Component>
+              <Component><Name>caseAudioFadeIn</Name><Value>true</Value></Component>
+              <Component><Name>spinnerAudioFadeIn</Name><Value>25</Value></Component>
+            </Settings></Shutter>");
+        let mapped = import_xml(&xml(true), &Settings::default()).unwrap();
+        assert_eq!(mapped.settings.video_fade_in_seconds, 2.0);
+        assert_eq!(mapped.settings.audio_fade_in_seconds, 1.0);
+        let skipped = import_xml(&xml(false), &Settings::default()).unwrap();
+        assert_eq!(skipped.settings.video_fade_in_seconds, 0.0);
+        assert!(skipped.skipped.iter().any(|s| s.contains("caseVideoFadeIn")));
+    }
+    #[test]
     fn refuses_unknown_function_and_entity_declaration() {
         let xml = "<Settings><Component><Name>comboFonctions</Name><Value>H.266</Value></Component></Settings>";
         assert!(import_xml(xml, &Settings::default()).is_err());
