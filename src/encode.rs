@@ -1403,6 +1403,25 @@ mod tests {
     }
 
     #[test]
+    fn video_limiter_emits_legal_levels_for_output_depth() {
+        let dir = std::env::temp_dir().join(format!("rust-encoder-limiter-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.mkv");
+        fs::write(&input, b"fixture").unwrap();
+        let mut options = options(Preset::H265);
+        options.broadcast_video_limiter = true;
+        let args = build_args(&input, &dir.join("out.mp4"), &options).unwrap();
+        assert!(args.windows(2).any(|p| p[0] == "-vf"
+            && p[1].to_string_lossy().contains("limiter=min=16:max=235")));
+        options.output_bit_depth = 10;
+        let args = build_args(&input, &dir.join("out.mp4"), &options).unwrap();
+        assert!(args.windows(2).any(|p| p[0] == "-vf"
+            && p[1].to_string_lossy().contains("limiter=min=64:max=940")));
+        options.preset = Preset::Wav;
+        assert!(validate_options(&options).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn graphic_equalizer_combines_bands_and_rejects_invalid_gain() {
         let dir = std::env::temp_dir().join(format!("rust-encoder-graphic-eq-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
