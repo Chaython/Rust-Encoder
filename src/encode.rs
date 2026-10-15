@@ -1630,7 +1630,7 @@ mod tests {
         o.video_fade_in_seconds = 2.5;
         let args = build_args(&input, &dir.join("output.mp4"), &o).unwrap();
         assert!(args.windows(2).any(|pair| pair[0] == "-af"
-            && pair[1].to_string_lossy().contains("afade=t=in:st=0:d=1.250")));
+            && pair[1].to_string_lossy().contains("afade=t=in:st=0.000:d=1.250")));
         assert!(args.windows(2).any(|pair| pair[0] == "-vf"
             && pair[1].to_string_lossy().contains("fade=t=in:st=0:d=2.500")));
         o.audio_fade_in_seconds = f32::NAN;
