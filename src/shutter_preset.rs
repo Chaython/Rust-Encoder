@@ -40,8 +40,12 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
     if !is_settings && !is_shutter_export {
         return Err("Not a Shutter Encoder settings XML document".into());
     }
+    let settings_node = if is_settings { root } else {
+        root.children().find(|child| child.has_tag_name("Settings"))
+            .ok_or("Shutter preset is missing Settings")?
+    };
     let mut values = HashMap::new();
-    for component in document.descendants().filter(|n| n.has_tag_name("Component")) {
+    for component in settings_node.descendants().filter(|n| n.has_tag_name("Component")) {
         let child = |name| component.children().find(|c| c.has_tag_name(name))
             .and_then(|c| c.text()).map(str::trim);
         if let (Some(name), Some(value)) = (child("Name"), child("Value")) {
@@ -284,7 +288,7 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         "caseRotate", "caseMiror", "caseChangeAudioCodec",
         "caseVideoFadeIn", "caseAudioFadeIn", "caseVideoFadeOut", "caseAudioFadeOut",
     ];
-    for component in document.descendants().filter(|n| n.has_tag_name("Component")) {
+    for component in settings_node.descendants().filter(|n| n.has_tag_name("Component")) {
         let child = |tag| component.children().find(|c| c.has_tag_name(tag))
             .and_then(|c| c.text()).map(str::trim);
         if child("Type") == Some("JCheckBox") && child("Value") == Some("true") {
@@ -484,6 +488,15 @@ mod tests {
         let result = import_xml(xml, &Settings::default()).unwrap();
         assert_eq!(result.skipped.iter().filter(|s| s.contains("caseMixAudio")).count(), 1);
         assert_eq!(result.skipped.iter().filter(|s| s.contains("caseCustomUnknown")).count(), 1);
+    }
+    #[test]
+    fn ignores_components_outside_the_settings_section() {
+        let xml = r#"<Shutter>
+          <Other><Component><Name>comboFonctions</Name><Value>H.265</Value></Component></Other>
+          <Settings><Component><Name>comboFonctions</Name><Value>H.264</Value></Component></Settings>
+        </Shutter>"#;
+        let result = import_xml(xml, &Settings::default()).unwrap();
+        assert_eq!(result.settings.preset, Preset::H264);
     }
     #[test]
     fn refuses_unknown_function_and_entity_declaration() {
