@@ -1177,6 +1177,8 @@ impl EncoderApp {
             if !self.settings.preset.video() {
                 self.settings.target_width = 0;
                 self.settings.frame_rate = 0;
+                self.settings.frame_rate_numerator = 0;
+                self.settings.frame_rate_denominator = 1;
                 self.settings.crop_width = 0; self.settings.crop_height = 0;
                 self.settings.crop_x = 0; self.settings.crop_y = 0;
                 self.settings.rotate_degrees = 0;
@@ -1414,8 +1416,40 @@ impl EncoderApp {
             .show(ui, |ui| {
                 if self.settings.preset.video() {
                     ui.label("Output frame rate (0 = source)");
-                    changed |= ui.add(egui::DragValue::new(&mut self.settings.frame_rate)
-                        .range(0..=240)).changed();
+                    let modes = [
+                        (0, 1, "Integer / source"),
+                        (24_000, 1001, "23.976 FPS"),
+                        (30_000, 1001, "29.970 FPS"),
+                        (60_000, 1001, "59.940 FPS"),
+                    ];
+                    egui::ComboBox::from_id_salt("fractional-fps")
+                        .selected_text(if self.settings.frame_rate_numerator == 0 {
+                            "Integer / source"
+                        } else {
+                            match (self.settings.frame_rate_numerator, self.settings.frame_rate_denominator) {
+                                (24_000, 1001) => "23.976 FPS",
+                                (30_000, 1001) => "29.970 FPS",
+                                (60_000, 1001) => "59.940 FPS",
+                                _ => "Custom rational FPS",
+                            }
+                        })
+                        .show_ui(ui, |ui| {
+                            for (num, den, name) in modes {
+                                if ui.selectable_label(
+                                    self.settings.frame_rate_numerator == num
+                                        && (num == 0 || self.settings.frame_rate_denominator == den),
+                                    name,
+                                ).clicked() {
+                                    self.settings.frame_rate_numerator = num;
+                                    self.settings.frame_rate_denominator = den;
+                                    if num > 0 { self.settings.frame_rate = 0; }
+                                    changed = true;
+                                }
+                            }
+                        });
+                    changed |= ui.add_enabled(self.settings.frame_rate_numerator == 0,
+                        egui::DragValue::new(&mut self.settings.frame_rate)
+                            .range(0..=240)).changed();
                     ui.label("Crop (width and height 0 = off)");
                     ui.horizontal_wrapped(|ui| {
                         ui.label("Width");
