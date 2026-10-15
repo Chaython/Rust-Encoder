@@ -1379,6 +1379,14 @@ impl EncoderApp {
                         self.settings.audio_stream != -2 && self.settings.normalize_audio,
                         egui::DragValue::new(&mut self.settings.normalization_target_lufs)
                             .range(-31..=-5)).changed();
+                    ui.label("High-pass cutoff (Hz; 0 = off)");
+                    changed |= ui.add_enabled(self.settings.audio_stream != -2,
+                        egui::DragValue::new(&mut self.settings.audio_highpass_hz)
+                            .range(0..=20_000).speed(10)).changed();
+                    ui.label("Low-pass cutoff (Hz; 0 = off)");
+                    changed |= ui.add_enabled(self.settings.audio_stream != -2,
+                        egui::DragValue::new(&mut self.settings.audio_lowpass_hz)
+                            .range(0..=20_000).speed(10)).changed();
                     ui.label("Audio offset (seconds; + delay / - advance)");
                     changed |= ui.add_enabled(self.settings.audio_stream != -2,
                         egui::DragValue::new(&mut self.settings.audio_offset_seconds)
@@ -1770,6 +1778,8 @@ fn sanitize_codec_settings(settings: &mut Settings) {
         settings.audio_fade_in_seconds = 0.0;
         settings.audio_fade_out_seconds = 0.0;
         settings.audio_offset_seconds = 0.0;
+        settings.audio_highpass_hz = 0;
+        settings.audio_lowpass_hz = 0;
     }
     if !settings.use_video_bitrate {
         settings.max_video_bitrate_kbps = 0;
