@@ -524,6 +524,7 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
                 // not the encoded output depth. Convert first, or the 10-bit
                 // limits could be applied to an 8-bit source (crushing it).
                 let format = if preset == Preset::ProRes { "yuv422p10le" }
+                    else if preset == Preset::Dnxhr { "yuv422p" }
                     else if o.output_bit_depth == 10 { "yuv420p10le" }
                     else { "yuv420p" };
                 video_filters.push(format!("format={format}"));
@@ -1431,6 +1432,55 @@ mod tests {
         assert!(args.windows(2).any(|p| p[0] == "-rc" && p[1] == "vbr"));
         assert!(args.windows(2).any(|p| p[0] == "-b:v" && p[1] == "4500k"));
         assert!(!args.iter().any(|p| p == "-cq"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn four_shutter_video_effects_translate_to_verified_ffmpeg_filters() {
+        let dir = std::env::temp_dir().join(format!("rust-encoder-shutter-effects-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.mkv");
+        fs::write(&input, b"fixture").unwrap();
+        let mut o = options(Preset::H265);
+        o.video_detail_amount = 6;
+        o.video_grain_amount = 50;
+        o.video_nlmeans_strength = 8;
+        o.video_deflicker_amount = 40;
+        let args = build_args(&input, &dir.join("out.mp4"), &o).unwrap();
+        assert!(args.windows(2).any(|p| p[0] == "-vf" && {
+            let value = p[1].to_string_lossy();
+            value.contains("smartblur=1.0:-0.6")
+                && value.contains("noise=c0s=10:c1s=0:c2s=0:c3s=0:c0f=t+u")
+                && value.contains("nlmeans=s=8:p=3:r=6:pc=0")
+                && value.contains("deflicker=s=53")
+        }));
+        o.video_nlmeans_strength = 11;
+        assert!(validate_options(&o).is_err());
+        o.video_nlmeans_strength = 8;
+        o.video_detail_amount = -11;
+        assert!(validate_options(&o).is_err());
+        o.video_detail_amount = 6;
+        o.preset = Preset::Wav;
+        assert!(validate_options(&o).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn limiter_converts_filter_depth_before_clipping() {
+        let dir = std::env::temp_dir().join(format!("rust-encoder-limiter-depth-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.mkv");
+        fs::write(&input, b"fixture").unwrap();
+        let mut o = options(Preset::H265);
+        o.broadcast_video_limiter = true;
+        o.output_bit_depth = 10;
+        let args = build_args(&input, &dir.join("out.mp4"), &o).unwrap();
+        assert!(args.windows(2).any(|p| p[0] == "-vf"
+            && p[1].to_string_lossy().contains("format=yuv420p10le,limiter=min=64:max=940")));
+        o.output_bit_depth = 8;
+        let args = build_args(&input, &dir.join("out.mp4"), &o).unwrap();
+        assert!(args.windows(2).any(|p| p[0] == "-vf"
+            && p[1].to_string_lossy().contains("format=yuv420p,limiter=min=16:max=235")));
         fs::remove_dir_all(dir).unwrap();
     }
 
