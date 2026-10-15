@@ -1358,6 +1358,25 @@ mod tests {
     }
 
     #[test]
+    fn audio_offsets_generate_delay_or_trim_filters() {
+        let dir = std::env::temp_dir().join(format!("rust-encoder-offset-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.mkv");
+        fs::write(&input, b"fixture").unwrap();
+        let mut o = options(Preset::H264);
+        o.audio_offset_seconds = 0.5;
+        let args = build_args(&input, &dir.join("out.mp4"), &o).unwrap();
+        assert!(args.windows(2).any(|p| p[0] == "-af"
+            && p[1].to_string_lossy().contains("adelay=500:all=1")));
+        o.audio_offset_seconds = -0.5;
+        let args = build_args(&input, &dir.join("out.mp4"), &o).unwrap();
+        assert!(args.windows(2).any(|p| p[0] == "-af"
+            && p[1].to_string_lossy().contains("atrim=start=0.500,asetpts=PTS-STARTPTS")));
+        o.audio_offset_seconds = f32::INFINITY;
+        assert!(validate_options(&o).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn loudness_target_reaches_ffmpeg_without_silent_substitution() {
         let dir = std::env::temp_dir().join(format!("rust-encoder-lufs-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
