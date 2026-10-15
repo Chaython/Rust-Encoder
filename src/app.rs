@@ -1374,6 +1374,11 @@ impl EncoderApp {
                 if self.settings.preset.video() || self.settings.preset.audio_only() {
                     changed |= ui.add_enabled(self.settings.audio_stream != -2,
                         egui::Checkbox::new(&mut self.settings.normalize_audio, "Normalize loudness (one-pass)")).changed();
+                    ui.label("Normalization target (LUFS)");
+                    changed |= ui.add_enabled(
+                        self.settings.audio_stream != -2 && self.settings.normalize_audio,
+                        egui::DragValue::new(&mut self.settings.normalization_target_lufs)
+                            .range(-31..=-5)).changed();
                     ui.label("Audio fade-in (seconds, 0 = off)");
                     changed |= ui.add_enabled(self.settings.audio_stream != -2,
                         egui::DragValue::new(&mut self.settings.audio_fade_in_seconds)
