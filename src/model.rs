@@ -248,9 +248,7 @@ pub struct EncodeOptions {
     pub start_seconds: f64,
     pub end_seconds: f64,
     pub normalize_audio: bool,
-    #[serde(default)]
     pub audio_fade_in_seconds: f32,
-    #[serde(default)]
     pub video_fade_in_seconds: f32,
     pub hardware_encoder: HardwareEncoder,
     pub frame_rate: u16, // 0 keeps the source frame rate
