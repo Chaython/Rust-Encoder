@@ -96,10 +96,17 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
             } else { skipped.push(format!("Hardware {accel} is incompatible with {function}")); }
         } else { skipped.push(format!("Unrecognized hardware choice: {accel}")); }
     }
-    if let Some(value) = get("caseNormalizeAudio") {
-        if value == "true" && (preset.video() || preset.audio_only()) {
+    if get("caseNormalizeAudio") == Some("true") {
+        // Rust Encoder currently has a fixed -16 LUFS loudnorm target.
+        // Importing a different Shutter target as -16 LUFS changes loudness.
+        let target = get("comboNormalizeAudio").map(str::trim);
+        if (preset.video() || preset.audio_only())
+            && target.is_some_and(|s| s.eq_ignore_ascii_case("-16 LUFS")) {
             settings.normalize_audio = true;
-            applied.push("Audio normalization".into());
+            applied.push("Audio normalization (-16 LUFS)".into());
+        } else {
+            skipped.push(format!("Audio normalization target requires manual review: {}",
+                target.unwrap_or("unspecified")));
         }
     }
     if let Some(value) = get("caseFastStart") {
@@ -522,6 +529,16 @@ mod tests {
         </Shutter>"#;
         let result = import_xml(xml, &Settings::default()).unwrap();
         assert_eq!(result.settings.preset, Preset::H264);
+    }
+    #[test]
+    fn preserves_normalization_targets_instead_of_substituting_sixteen_lufs() {
+        let xml = |target: &str| format!(
+            "<Shutter><Settings><Component><Name>comboFonctions</Name><Value>H.264</Value></Component><Component><Name>caseNormalizeAudio</Name><Value>true</Value></Component><Component><Name>comboNormalizeAudio</Name><Value>{target}</Value></Component></Settings></Shutter>");
+        let supported = import_xml(&xml("-16 LUFS"), &Settings::default()).unwrap();
+        assert!(supported.settings.normalize_audio);
+        let different = import_xml(&xml("-23 LUFS"), &Settings::default()).unwrap();
+        assert!(!different.settings.normalize_audio);
+        assert!(different.skipped.iter().any(|s| s.contains("-23 LUFS")));
     }
     #[test]
     fn refuses_unknown_function_and_entity_declaration() {
