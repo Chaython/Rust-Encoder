@@ -1355,6 +1355,28 @@ mod tests {
     }
 
     #[test]
+    fn fade_outs_are_relative_to_selected_trim_duration() {
+        let dir = std::env::temp_dir().join(format!("rust-encoder-fade-out-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("source.mkv");
+        fs::write(&input, b"fixture").unwrap();
+        let mut o = options(Preset::H264);
+        o.audio_fade_out_seconds = 1.5;
+        o.video_fade_out_seconds = 2.0;
+        assert!(validate_options(&o).is_err());
+        o.start_seconds = 2.0;
+        o.end_seconds = 12.0;
+        let args = build_args(&input, &dir.join("out.mp4"), &o).unwrap();
+        assert!(args.windows(2).any(|p| p[0] == "-af"
+            && p[1].to_string_lossy().contains("afade=t=out:st=8.500:d=1.500")));
+        assert!(args.windows(2).any(|p| p[0] == "-vf"
+            && p[1].to_string_lossy().contains("fade=t=out:st=8.000:d=2.000")));
+        o.video_fade_out_seconds = 11.0;
+        assert!(validate_options(&o).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn hardware_quality_modes_emit_backend_specific_arguments() {
         let dir = std::env::temp_dir().join(format!(
             "rust-encoder-hw-quality-{}-{:?}", std::process::id(), std::thread::current().id()));
