@@ -172,6 +172,10 @@ pub struct Settings {
     pub audio_fade_in_seconds: f32,
     #[serde(default)]
     pub video_fade_in_seconds: f32,
+    #[serde(default)]
+    pub audio_fade_out_seconds: f32,
+    #[serde(default)]
+    pub video_fade_out_seconds: f32,
     pub hardware_encoder: HardwareEncoder,
     pub frame_rate: u16, // 0 keeps the source frame rate
     pub crop_width: u32, // 0 disables crop
@@ -213,7 +217,7 @@ impl Default for Settings {
             keyframe_interval: 0, faststart: true, target_width: 0,
             audio_bitrate_kbps: 192, start_seconds: 0.0, end_seconds: 0.0,
             normalize_audio: false, audio_fade_in_seconds: 0.0,
-            video_fade_in_seconds: 0.0,
+            video_fade_in_seconds: 0.0, audio_fade_out_seconds: 0.0, video_fade_out_seconds: 0.0,
             hardware_encoder: HardwareEncoder::Software, frame_rate: 0,
             crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
             rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
@@ -250,6 +254,8 @@ pub struct EncodeOptions {
     pub normalize_audio: bool,
     pub audio_fade_in_seconds: f32,
     pub video_fade_in_seconds: f32,
+    pub audio_fade_out_seconds: f32,
+    pub video_fade_out_seconds: f32,
     pub hardware_encoder: HardwareEncoder,
     pub frame_rate: u16, // 0 keeps the source frame rate
     pub crop_width: u32, // 0 disables crop
@@ -293,6 +299,8 @@ impl Settings {
             normalize_audio: self.normalize_audio,
             audio_fade_in_seconds: self.audio_fade_in_seconds,
             video_fade_in_seconds: self.video_fade_in_seconds,
+            audio_fade_out_seconds: self.audio_fade_out_seconds,
+            video_fade_out_seconds: self.video_fade_out_seconds,
             hardware_encoder: self.hardware_encoder, frame_rate: self.frame_rate,
             crop_width: self.crop_width, crop_height: self.crop_height,
             crop_x: self.crop_x, crop_y: self.crop_y,
