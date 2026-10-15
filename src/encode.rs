@@ -1310,6 +1310,29 @@ mod tests {
     }
 
     #[test]
+    fn fade_filters_generate_exact_ffmpeg_arguments() {
+        let dir = std::env::temp_dir().join(format!(
+            "rust-encoder-fades-{}-{:?}", std::process::id(), std::thread::current().id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("source.mkv");
+        fs::write(&input, b"fixture").unwrap();
+        let mut o = options(Preset::H264);
+        o.audio_fade_in_seconds = 1.25;
+        o.video_fade_in_seconds = 2.5;
+        let args = build_args(&input, &dir.join("output.mp4"), &o).unwrap();
+        assert!(args.windows(2).any(|pair| pair[0] == "-af"
+            && pair[1].to_string_lossy().contains("afade=t=in:st=0:d=1.250")));
+        assert!(args.windows(2).any(|pair| pair[0] == "-vf"
+            && pair[1].to_string_lossy().contains("fade=t=in:st=0:d=2.500")));
+        o.audio_fade_in_seconds = f32::NAN;
+        assert!(validate_options(&o).is_err());
+        o.audio_fade_in_seconds = 0.0;
+        o.video_fade_in_seconds = 601.0;
+        assert!(validate_options(&o).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn hardware_quality_modes_emit_backend_specific_arguments() {
         let dir = std::env::temp_dir().join(format!(
             "rust-encoder-hw-quality-{}-{:?}", std::process::id(), std::thread::current().id()));
