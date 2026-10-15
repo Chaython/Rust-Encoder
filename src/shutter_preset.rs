@@ -178,6 +178,23 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
     }
     // Audio mapping is per-channel in Shutter. Arbitrary mixes are not
     // equivalent to selecting a single FFmpeg audio stream.
+    // Rotation and horizontal mirroring have direct FFmpeg equivalents.
+    if preset.video() {
+        if get("caseRotate") == Some("true") {
+            match get("comboRotate") {
+                Some("0") => { settings.rotate_degrees = 0; applied.push("Rotation: 0°".into()); }
+                Some("90") => { settings.rotate_degrees = 90; applied.push("Rotation: 90°".into()); }
+                Some("-90") => { settings.rotate_degrees = 270; applied.push("Rotation: -90°".into()); }
+                Some("180") => { settings.rotate_degrees = 180; applied.push("Rotation: 180°".into()); }
+                Some(v) => skipped.push(format!("Unrecognized rotation: {v}")),
+                None => skipped.push("Rotation enabled without angle".into()),
+            }
+        }
+        if get("caseMiror") == Some("true") {
+            settings.flip_horizontal = true;
+            applied.push("Horizontal mirror".into());
+        }
+    }
     // Shutter Encoder's QMax checkbox controls quantizer constraints;
     // it is NOT an encoding-speed preset. Never substitute a speed setting.
     if get("caseQMax") == Some("true") && preset.video() {
@@ -210,6 +227,7 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
     const MAPPED_CHECKBOXES: &[&str] = &[
         "caseNormalizeAudio", "caseFastStart", "caseGOP", "case2pass",
         "caseQMax", "caseForcerDesentrelacement", "caseConform", "caseSampleRate",
+        "caseRotate", "caseMiror",
         "caseAudioOffset", "caseAudioFadeIn", "caseAudioFadeOut",
         "caseVideoFadeIn", "caseVideoFadeOut", "caseMixAudio",
         "caseSplitAudio", "caseConvertAudioFramerate", "caseForceTune",
@@ -349,6 +367,19 @@ mod tests {
         assert!(!active.skipped.iter().any(|s| s.contains("caseSampleRate")));
         let inactive = import_xml(&xml(false), &Settings::default()).unwrap();
         assert_eq!(inactive.settings.audio_sample_rate, 0);
+    }
+    #[test]
+    fn translates_shutter_rotation_and_mirror() {
+        let xml = r#"<Shutter><Settings>
+            <Component><Name>comboFonctions</Name><Value>H.264</Value></Component>
+            <Component><Type>JCheckBox</Type><Name>caseRotate</Name><Value>true</Value></Component>
+            <Component><Name>comboRotate</Name><Value>-90</Value></Component>
+            <Component><Type>JCheckBox</Type><Name>caseMiror</Name><Value>true</Value></Component>
+        </Settings></Shutter>"#;
+        let imported = import_xml(xml, &Settings::default()).unwrap();
+        assert_eq!(imported.settings.rotate_degrees, 270);
+        assert!(imported.settings.flip_horizontal);
+        assert!(!imported.skipped.iter().any(|v| v.contains("caseRotate") || v.contains("caseMiror")));
     }
     #[test]
     fn refuses_unknown_function_and_entity_declaration() {
