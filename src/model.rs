@@ -168,6 +168,8 @@ pub struct Settings {
     pub start_seconds: f64,
     pub end_seconds: f64,
     pub normalize_audio: bool,
+    #[serde(default = "default_normalization_target_lufs")]
+    pub normalization_target_lufs: i8,
     #[serde(default)]
     pub audio_fade_in_seconds: f32,
     #[serde(default)]
@@ -220,7 +222,7 @@ impl Default for Settings {
             max_video_bitrate_kbps: 0, encoder_speed: 1, encoder_threads: 0,
             keyframe_interval: 0, faststart: true, target_width: 0,
             audio_bitrate_kbps: 192, start_seconds: 0.0, end_seconds: 0.0,
-            normalize_audio: false, audio_fade_in_seconds: 0.0,
+            normalize_audio: false, normalization_target_lufs: -16, audio_fade_in_seconds: 0.0,
             video_fade_in_seconds: 0.0, audio_fade_out_seconds: 0.0, video_fade_out_seconds: 0.0,
             hardware_encoder: HardwareEncoder::Software, frame_rate: 0, frame_rate_numerator: 0, frame_rate_denominator: 1,
             crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
@@ -256,6 +258,7 @@ pub struct EncodeOptions {
     pub start_seconds: f64,
     pub end_seconds: f64,
     pub normalize_audio: bool,
+    pub normalization_target_lufs: i8,
     pub audio_fade_in_seconds: f32,
     pub video_fade_in_seconds: f32,
     pub audio_fade_out_seconds: f32,
@@ -303,6 +306,7 @@ impl Settings {
             audio_bitrate_kbps: self.audio_bitrate_kbps,
             start_seconds: self.start_seconds, end_seconds: self.end_seconds,
             normalize_audio: self.normalize_audio,
+            normalization_target_lufs: self.normalization_target_lufs,
             audio_fade_in_seconds: self.audio_fade_in_seconds,
             video_fade_in_seconds: self.video_fade_in_seconds,
             audio_fade_out_seconds: self.audio_fade_out_seconds,
@@ -406,3 +410,5 @@ mod tests {
 }
 
 fn default_fps_denominator() -> u32 { 1 }
+
+fn default_normalization_target_lufs() -> i8 { -16 }
