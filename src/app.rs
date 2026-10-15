@@ -1183,7 +1183,7 @@ impl EncoderApp {
                 self.settings.crop_x = 0; self.settings.crop_y = 0;
                 self.settings.rotate_degrees = 0;
                 self.settings.flip_horizontal = false; self.settings.flip_vertical = false;
-                self.settings.deinterlace = false; self.settings.denoise = false;
+                self.settings.deinterlace = false; self.settings.broadcast_video_limiter = false; self.settings.denoise = false;
                 self.settings.sharpen = false;
                 self.settings.brightness = 0.0; self.settings.contrast = 1.0;
                 self.settings.saturation = 1.0; self.settings.gamma = 1.0;
@@ -1346,6 +1346,8 @@ impl EncoderApp {
                     ui.label("Encoding threads (0 = automatic)");
                     changed |= ui.add(egui::DragValue::new(&mut self.settings.encoder_threads)
                         .range(0..=32)).changed();
+                    changed |= ui.checkbox(&mut self.settings.broadcast_video_limiter,
+                        "Limit video to broadcast/legal range").changed();
                     ui.label("Video fade-in (seconds, 0 = off)");
                     changed |= ui.add(egui::DragValue::new(&mut self.settings.video_fade_in_seconds)
                         .range(0.0..=600.0).speed(0.1)).changed();
