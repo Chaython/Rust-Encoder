@@ -462,6 +462,18 @@ mod tests {
         assert!(skipped.skipped.iter().any(|s| s.contains("caseVideoFadeIn")));
     }
     #[test]
+    fn reports_each_unmapped_active_checkbox_once() {
+        let xml = r#"<Shutter><Settings>
+          <Component><Name>comboFonctions</Name><Value>H.264</Value></Component>
+          <Component><Type>JCheckBox</Type><Name>caseMixAudio</Name><Value>true</Value></Component>
+          <Component><Type>JCheckBox</Type><Name>caseCustomUnknown</Name><Value>true</Value></Component>
+          <Component><Type>JCheckBox</Type><Name>caseCustomUnknown</Name><Value>true</Value></Component>
+        </Settings></Shutter>"#;
+        let result = import_xml(xml, &Settings::default()).unwrap();
+        assert_eq!(result.skipped.iter().filter(|s| s.contains("caseMixAudio")).count(), 1);
+        assert_eq!(result.skipped.iter().filter(|s| s.contains("caseCustomUnknown")).count(), 1);
+    }
+    #[test]
     fn refuses_unknown_function_and_entity_declaration() {
         let xml = "<Settings><Component><Name>comboFonctions</Name><Value>H.266</Value></Component></Settings>";
         assert!(import_xml(xml, &Settings::default()).is_err());
