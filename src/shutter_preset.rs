@@ -236,10 +236,10 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
                 settings.audio_offset_seconds = seconds as f32;
                 applied.push(format!("Audio offset: {frames} frames"));
             } else {
-                skipped.push("Audio offset requires a compatible conform frame rate".into());
+                skipped.push("caseAudioOffset: Audio offset requires a compatible conform frame rate".into());
             }
         } else {
-            skipped.push("Audio offset is missing a valid frame count".into());
+            skipped.push("caseAudioOffset: Audio offset is missing a valid frame count".into());
         }
     }
     // Shutter's "caseSampleRate" specifically forces 48 kHz (lbl48k),
