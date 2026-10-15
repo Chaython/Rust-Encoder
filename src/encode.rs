@@ -179,12 +179,25 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     if options.audio_mix_secondary_stream < -1 || options.audio_mix_secondary_stream > 31 {
         return Err("Secondary audio mix track must be -1 (disabled) or 0–31".into());
     }
+    if options.audio_mix_extra_tracks.len() > 6 {
+        return Err("At most eight audio tracks can be mixed".into());
+    }
+    if !options.audio_mix_extra_tracks.is_empty() && options.audio_mix_secondary_stream < 0 {
+        return Err("Select a secondary audio track before adding more tracks".into());
+    }
     if options.audio_mix_secondary_stream >= 0 {
         if options.audio_stream < 0 || options.audio_stream > 31 {
             return Err("Select a specific primary audio track before mixing".into());
         }
         if options.audio_stream == options.audio_mix_secondary_stream {
             return Err("Cannot mix an audio track with itself".into());
+        }
+        let mut seen = vec![options.audio_stream as u8, options.audio_mix_secondary_stream as u8];
+        for &extra in &options.audio_mix_extra_tracks {
+            if extra > 31 || seen.contains(&extra) {
+                return Err(format!("Audio mix track #{extra} is out of range or selected twice"));
+            }
+            seen.push(extra);
         }
     }
     let audio_processing = options.audio_mix_secondary_stream >= 0
@@ -284,13 +297,25 @@ fn audio_filters(o: &EncodeOptions) -> Vec<String> {
     filters
 }
 
-/// Create a single audio output from two explicitly selected source tracks.
-/// All optional audio processing runs once on the mixed stream afterwards.
+/// Shared input topology for exported mixes and native PCM preview.
+/// Callers validate track indices before constructing the filter.
+pub fn mixed_audio_inputs(tracks: &[usize]) -> String {
+    let mut graph = String::new();
+    for &track in tracks {
+        graph.push_str(&format!("[0:a:{track}]"));
+    }
+    graph.push_str(&format!(
+        "amix=inputs={}:duration=longest:dropout_transition=0:normalize=1",
+        tracks.len(),
+    ));
+    graph
+}
+
+/// Combine 2–8 selected audio tracks, then apply audio corrections once.
 fn mixed_audio_filter_graph(o: &EncodeOptions) -> String {
-    let mut graph = format!(
-        "[0:a:{}][0:a:{}]amix=inputs=2:duration=longest:dropout_transition=0:normalize=1",
-        o.audio_stream, o.audio_mix_secondary_stream,
-    );
+    let mut tracks = vec![o.audio_stream as usize, o.audio_mix_secondary_stream as usize];
+    tracks.extend(o.audio_mix_extra_tracks.iter().map(|&t| usize::from(t)));
+    let mut graph = mixed_audio_inputs(&tracks);
     let effects = audio_filters(o);
     if !effects.is_empty() {
         graph.push(',');
@@ -877,6 +902,7 @@ pub fn build_two_pass_args(
     let mut first_pass_options = options.clone();
     if pass == 1 {
         first_pass_options.audio_mix_secondary_stream = -1;
+        first_pass_options.audio_mix_extra_tracks.clear();
     }
     let mut args = build_args(&absolute_input, &absolute_output,
         if pass == 1 { &first_pass_options } else { options })?;
@@ -1063,7 +1089,7 @@ mod tests {
             hardware_encoder: HardwareEncoder::Software,
             frame_rate: 0, frame_rate_numerator: 0, frame_rate_denominator: 1, crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
             rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
-            audio_stream: -1, audio_mix_secondary_stream: -1, subtitle_stream: -1, video_stream: 0,
+            audio_stream: -1, audio_mix_secondary_stream: -1, audio_mix_extra_tracks: Vec::new(), subtitle_stream: -1, video_stream: 0,
             deinterlace: false, broadcast_video_limiter: false,
             video_detail_amount: 0, video_grain_amount: 0,
             video_nlmeans_strength: 0, video_deflicker_amount: 0,
@@ -1609,6 +1635,35 @@ mod tests {
         assert!(validate_options(&o).is_err());
         fs::remove_dir_all(dir).unwrap();
     }
+    #[test]
+    fn mix_multiple_tracks_builds_shared_graph_and_rejects_duplicates() {
+        let dir = std::env::temp_dir().join(format!("rust-encoder-eight-track-mix-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.mkv");
+        fs::write(&input, b"fixture").unwrap();
+        let mut opts = options(Preset::Wav);
+        opts.audio_stream = 0;
+        opts.audio_mix_secondary_stream = 1;
+        opts.audio_mix_extra_tracks = vec![2, 3];
+        let args = build_args(&input, &dir.join("four.wav"), &opts).unwrap();
+        assert!(args.windows(2).any(|w| w[0] == "-filter_complex" && {
+            let g = w[1].to_string_lossy();
+            g.contains("[0:a:0][0:a:1][0:a:2][0:a:3]amix=inputs=4") && g.ends_with("[mixed_audio]")
+        }));
+        opts.audio_mix_extra_tracks = vec![2, 2];
+        assert!(validate_options(&opts).is_err());
+        opts.audio_mix_extra_tracks = vec![0];
+        assert!(validate_options(&opts).is_err());
+        opts.audio_mix_extra_tracks = vec![32];
+        assert!(validate_options(&opts).is_err());
+        opts.audio_mix_extra_tracks = vec![2, 3, 4, 5, 6, 7, 8];
+        assert!(validate_options(&opts).is_err());
+        opts.audio_mix_secondary_stream = -1;
+        opts.audio_mix_extra_tracks = vec![2];
+        assert!(validate_options(&opts).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn selected_audio_tracks_mix_once_and_keep_effects_on_the_mixed_output() {
         let dir = std::env::temp_dir().join(format!("rust-encoder-mix-{}", std::process::id()));

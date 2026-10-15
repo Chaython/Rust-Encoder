@@ -16,7 +16,7 @@ fn options(preset: Preset) -> EncodeOptions {
         hardware_encoder: HardwareEncoder::Software, frame_rate: 0, frame_rate_numerator: 0, frame_rate_denominator: 1,
         crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
         rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
-        audio_stream: -1, audio_mix_secondary_stream: -1, subtitle_stream: -1, video_stream: 0,
+        audio_stream: -1, audio_mix_secondary_stream: -1, audio_mix_extra_tracks: Vec::new(), subtitle_stream: -1, video_stream: 0,
         deinterlace: false, broadcast_video_limiter: false,
         video_detail_amount: 0, video_grain_amount: 0,
         video_nlmeans_strength: 0, video_deflicker_amount: 0,
@@ -327,7 +327,7 @@ fn vp9_ten_bit_profile_two_roundtrip() {
 }
 
 #[test]
-fn two_selected_audio_streams_mix_into_one_encodable_track() {
+fn multiple_selected_audio_streams_mix_into_one_encodable_track() {
     if !ffmpeg_available()
         || Command::new("ffprobe").arg("-version").output().is_err() {
         eprintln!("Skipping mix integration: FFmpeg/FFprobe unavailable");
@@ -337,13 +337,14 @@ fn two_selected_audio_streams_mix_into_one_encodable_track() {
         "rust-encoder-mix-e2e-{}-{:?}", std::process::id(), std::thread::current().id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
-    let input = dir.join("two-tracks.mkv");
+    let input = dir.join("three-tracks.mkv");
     command_ok(Command::new("ffmpeg").args([
         "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
         "-f", "lavfi", "-i", "testsrc2=size=128x96:rate=10:duration=1",
         "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=1",
         "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=1",
-        "-map", "0:v", "-map", "1:a", "-map", "2:a",
+        "-f", "lavfi", "-i", "sine=frequency=1320:sample_rate=48000:duration=1",
+        "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:a",
         "-c:v", "mpeg4", "-c:a", "aac", "-shortest",
     ]).arg(&input));
 
@@ -351,6 +352,7 @@ fn two_selected_audio_streams_mix_into_one_encodable_track() {
         let mut o = options(preset);
         o.audio_stream = 0;
         o.audio_mix_secondary_stream = 1;
+        o.audio_mix_extra_tracks = vec![2];
         o.audio_gain_db = -3.0;
         let output = dir.join(name);
         let args = encode::build_args(&input, &output, &o).unwrap();
@@ -365,7 +367,7 @@ fn two_selected_audio_streams_mix_into_one_encodable_track() {
     }
     // Native preview must use the same mixing topology instead of
     // misleadingly playing only the primary source stream.
-    let args = audio_preview::audio_args_with_mix(&input, 0.0, None, 0, Some(1)).unwrap();
+    let args = audio_preview::audio_args_with_extra_mix(&input, 0.0, None, 0, Some(1), &[2]).unwrap();
     let pcm = Command::new("ffmpeg").args(args).output().unwrap();
     assert!(pcm.status.success(), "Mixed audio preview failed: {}",
         String::from_utf8_lossy(&pcm.stderr));
@@ -376,6 +378,7 @@ fn two_selected_audio_streams_mix_into_one_encodable_track() {
     let mut two_pass = options(Preset::H264);
     two_pass.audio_stream = 0;
     two_pass.audio_mix_secondary_stream = 1;
+    two_pass.audio_mix_extra_tracks = vec![2];
     two_pass.use_video_bitrate = true;
     two_pass.video_bitrate_kbps = 350;
     two_pass.two_pass = true;

@@ -78,9 +78,9 @@ The video controls now support four Shutter Encoder-equivalent processing settin
 
 The broadcast video limiter converts its filter input into a known 8-bit or 10-bit pixel format *before* clipping; this avoids applying 10-bit thresholds to an 8-bit source. ProRes retains its 10-bit 4:2:2 format and DNxHR retains 8-bit 4:2:2. FFmpeg filters run on the CPU, so these effects can increase transcoding time. Full LUT, motion-adaptive, Vulkan and color-workflow parity remains unfinished.
 
-## Mix two audio tracks
+## Mix up to eight audio tracks
 
-When video or audio is being re-encoded, select a **specific primary audio track** and optionally mix a **different secondary track**. FFmpeg `amix` combines them into a single encoded audio stream with normalized levels; existing gain, equalizer, normalization, timing, and fade filters apply **after** mixing. This does not copy the original separate audio tracks. Embedded audio preview plays the same normalized two-track mix (though it does not apply all export-only audio effects). Mixing is disabled for stream-copy and analysis; two-pass encoding mixes audio only in the final pass, and the Shutter `caseMixAudio` checkbox is not automatically imported because its settings may describe a different routing arrangement.
+When video or audio is being re-encoded, select a **specific primary audio track**, a **different secondary track**, and optionally up to six additional audio tracks. FFmpeg `amix` combines the selected tracks into one encoded stream with normalized levels; gain, EQ, loudness, timing and fades apply **after** mixing. Existing two-track saved profiles remain compatible. Source tracks not selected for the mix are not copied. Embedded audio preview decodes the same track mix (but does not apply all export-only audio effects). Mixed tracks are checked per file in batch queues before starting FFmpeg. Mixing is disabled for stream-copy and analysis; two-pass encoding mixes audio only on the final pass. The Shutter `caseMixAudio` checkbox is not automatically imported because its saved arrangement may describe different routing.
 
 ## Audio synchronization offset
 

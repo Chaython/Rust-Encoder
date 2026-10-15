@@ -87,6 +87,11 @@ fn validate_audio_tracks_in_job(options: &EncodeOptions, count: usize) -> Result
             return Err(format!("Secondary audio track #{} does not exist (this file has {count} audio tracks)",
                 options.audio_mix_secondary_stream));
         }
+        for &extra in &options.audio_mix_extra_tracks {
+            if usize::from(extra) >= count {
+                return Err(format!("Additional audio track #{extra} does not exist (this file has {count} audio tracks)"));
+            }
+        }
     }
     Ok(())
 }
@@ -809,9 +814,12 @@ impl EncoderApp {
             let secondary = (self.settings.audio_mix_secondary_stream >= 0)
                 .then_some(self.settings.audio_mix_secondary_stream as usize);
             if index < audio_tracks
-                && secondary.is_none_or(|other| other < audio_tracks && other != index) {
+                && secondary.is_none_or(|other| other < audio_tracks && other != index)
+                && self.settings.audio_mix_extra_tracks.iter()
+                    .all(|&extra| usize::from(extra) < audio_tracks) {
                 match NativeAudioPreview::launch(
-                    job_id, &ffmpeg, &input, position, stop, index, secondary
+                    job_id, &ffmpeg, &input, position, stop, index, secondary,
+                    &self.settings.audio_mix_extra_tracks
                 ) {
                     Ok(audio) => {
                         audio.set_volume(self.native_volume);
@@ -1210,6 +1218,7 @@ impl EncoderApp {
                 self.settings.audio_sample_rate = 0;
                 self.settings.audio_gain_db = 0.0;
                 self.settings.audio_mix_secondary_stream = -1;
+                self.settings.audio_mix_extra_tracks.clear();
                 self.settings.normalize_audio = false;
             }
             if !self.settings.preset.video() {
@@ -1665,11 +1674,31 @@ impl EncoderApp {
                             }
                         });
                     if self.settings.audio_mix_secondary_stream >= 0 {
-                        ui.small("Mixes only the selected two audio tracks into one stream. Choose a specific primary track, not All. Other audio tracks are not copied.");
+                        ui.small("Mixes 2–8 selected tracks into one output stream. Other source audio tracks are not copied.");
+                        ui.collapsing("Add more tracks to the mix (maximum eight total)", |ui| {
+                            let count = selected_info.map(|m| m.audio_tracks.len()).unwrap_or(8).min(32);
+                            for n in 0..count {
+                                if n as i32 == self.settings.audio_stream
+                                    || n as i32 == self.settings.audio_mix_secondary_stream { continue; }
+                                let mut selected = self.settings.audio_mix_extra_tracks.contains(&(n as u8));
+                                let available = selected || self.settings.audio_mix_extra_tracks.len() < 6;
+                                let label = selected_info.map(|m| m.audio_tracks[n].description(n))
+                                    .unwrap_or_else(|| format!("Audio #{n}"));
+                                if ui.add_enabled(available, egui::Checkbox::new(&mut selected, label)).changed() {
+                                    if selected {
+                                        self.settings.audio_mix_extra_tracks.push(n as u8);
+                                    } else {
+                                        self.settings.audio_mix_extra_tracks.retain(|&track| track != n as u8);
+                                    }
+                                    changed = true;
+                                }
+                            }
+                        });
                     }
                     if self.settings.audio_stream < 0
                         && self.settings.audio_mix_secondary_stream >= 0 {
                         self.settings.audio_mix_secondary_stream = -1;
+                        self.settings.audio_mix_extra_tracks.clear();
                         changed = true;
                     }
                     if self.settings.audio_stream == -2 {
@@ -1887,6 +1916,18 @@ fn sanitize_codec_settings(settings: &mut Settings) {
     if !(settings.preset.video() || settings.preset.audio_only())
         || settings.audio_stream < 0 {
         settings.audio_mix_secondary_stream = -1;
+    }
+    if settings.audio_mix_secondary_stream < 0 {
+        settings.audio_mix_extra_tracks.clear();
+    } else {
+        let primary = settings.audio_stream;
+        let secondary = settings.audio_mix_secondary_stream;
+        let mut seen = vec![primary as u8, secondary as u8];
+        settings.audio_mix_extra_tracks.retain(|&track| {
+            let valid = track < 32 && !seen.contains(&track) && seen.len() < 8;
+            if valid { seen.push(track); }
+            valid
+        });
     }
     if !(settings.preset.video() || settings.preset.audio_only())
         || settings.audio_stream == -2 {
@@ -2174,6 +2215,19 @@ mod tests {
         settings.preset = Preset::RemuxMkv;
         sanitize_codec_settings(&mut settings);
         assert_eq!(settings.video_fade_in_seconds, 0.0);
+    }
+    #[test]
+    fn batch_mix_rejects_missing_extra_tracks() {
+        let mut s = Settings::default();
+        s.audio_stream = 0;
+        s.audio_mix_secondary_stream = 1;
+        s.audio_mix_extra_tracks = vec![2, 3];
+        let o = s.encode_options();
+        assert!(validate_audio_tracks_in_job(&o, 4).is_ok());
+        assert!(validate_audio_tracks_in_job(&o, 3).unwrap_err().contains("Additional"));
+        s.audio_stream = -1;
+        sanitize_codec_settings(&mut s);
+        assert!(s.audio_mix_extra_tracks.is_empty());
     }
     #[test]
     fn batch_mix_selection_rejects_missing_secondary_tracks_before_ffmpeg() {

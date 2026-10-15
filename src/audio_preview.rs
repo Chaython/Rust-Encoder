@@ -40,14 +40,29 @@ pub fn audio_args(input: &Path, seek: f64, end: Option<f64>, stream_index: usize
     audio_args_with_mix(input, seek, end, stream_index, None)
 }
 
-/// Decode either a specific audio stream or a deliberate mix of two streams
-/// into stereo PCM for native preview playback.
+/// Existing two-track preview API, preserved for earlier callers.
 pub fn audio_args_with_mix(input: &Path, seek: f64, end: Option<f64>,
                            stream_index: usize, secondary: Option<usize>)
     -> Result<Vec<OsString>, String> {
-    if let Some(other) = secondary {
-        if other > 31 || other == stream_index {
-            return Err("Secondary audio track must be 0–31 and different from primary".into());
+    audio_args_with_extra_mix(input, seek, end, stream_index, secondary, &[])
+}
+
+/// Decode one track or a selected 2–8-track mix into stereo PCM.
+pub fn audio_args_with_extra_mix(input: &Path, seek: f64, end: Option<f64>,
+    stream_index: usize, secondary: Option<usize>, extras: &[u8])
+    -> Result<Vec<OsString>, String> {
+    if extras.len() > 6 || (!extras.is_empty() && secondary.is_none()) {
+        return Err("Preview mixing requires a secondary track and at most six additional tracks".into());
+    }
+    let mut tracks = vec![stream_index];
+    if let Some(other) = secondary { tracks.push(other); }
+    tracks.extend(extras.iter().map(|&n| usize::from(n)));
+    if tracks.iter().any(|&n| n > 31) {
+        return Err("Preview audio track must be between 0 and 31".into());
+    }
+    for (index, &track) in tracks.iter().enumerate() {
+        if tracks[..index].contains(&track) {
+            return Err("Preview audio tracks must be unique".into());
         }
     }
     if !input.is_file() { return Err(format!("Audio source does not exist: {}", input.display())); }
@@ -67,11 +82,9 @@ pub fn audio_args_with_mix(input: &Path, seek: f64, end: Option<f64>,
         args.push(OsString::from("-t"));
         args.push(format!("{:.3}", end - seek).into());
     }
-    if let Some(other) = secondary {
+    if secondary.is_some() {
         args.push(OsString::from("-filter_complex"));
-        args.push(format!(
-            "[0:a:{stream_index}][0:a:{other}]amix=inputs=2:duration=longest:dropout_transition=0:normalize=1[mixed_audio]"
-        ).into());
+        args.push(format!("{}[mixed_audio]", crate::encode::mixed_audio_inputs(&tracks)).into());
         args.extend([OsString::from("-map"), OsString::from("[mixed_audio]")]);
     } else {
         args.extend([OsString::from("-map"), OsString::from(format!("0:a:{stream_index}"))]);
@@ -141,8 +154,8 @@ pub struct NativeAudioPreview {
 impl NativeAudioPreview {
     pub fn launch(job_id: u64, ffmpeg: &Path, input: &Path, seek: f64,
                   end: Option<f64>, audio_stream: usize,
-                  secondary: Option<usize>) -> Result<Self, String> {
-        let args = audio_args_with_mix(input, seek, end, audio_stream, secondary)?;
+                  secondary: Option<usize>, extras: &[u8]) -> Result<Self, String> {
+        let args = audio_args_with_extra_mix(input, seek, end, audio_stream, secondary, extras)?;
         let output = OutputStreamBuilder::open_default_stream()
             .map_err(|e| format!("Cannot open system audio output: {e}"))?;
         let sink = Arc::new(Sink::connect_new(output.mixer()));
@@ -276,6 +289,17 @@ mod tests {
         assert!(args.windows(2).any(|p| p[0] == "-map" && p[1] == "[mixed_audio]"));
         assert!(audio_args_with_mix(&path, 0.0, None, 1, Some(1)).is_err());
         assert!(audio_args_with_mix(&path, 0.0, None, 0, Some(32)).is_err());
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn extra_audio_tracks_are_mixed_in_preview_without_duplicates() {
+        let path = std::env::temp_dir().join(format!("multitrack-preview-{}.mkv", std::process::id()));
+        std::fs::write(&path, b"fixture").unwrap();
+        let args = audio_args_with_extra_mix(&path, 0.0, None, 0, Some(1), &[2, 3]).unwrap();
+        assert!(args.windows(2).any(|p| p[0] == "-filter_complex"
+            && p[1].to_string_lossy().contains("[0:a:0][0:a:1][0:a:2][0:a:3]amix=inputs=4")));
+        assert!(audio_args_with_extra_mix(&path, 0.0, None, 0, Some(1), &[2, 2]).is_err());
+        assert!(audio_args_with_extra_mix(&path, 0.0, None, 0, None, &[2]).is_err());
         std::fs::remove_file(path).unwrap();
     }
     #[test]
