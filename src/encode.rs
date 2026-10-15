@@ -118,8 +118,20 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     }
     // All audio filters, including loudness normalization, require an encoder.
     // Never silently discard a requested normalization during stream copy.
+    for (label, duration) in [
+        ("Audio", options.audio_fade_in_seconds),
+        ("Video", options.video_fade_in_seconds),
+    ] {
+        if !duration.is_finite() || !(0.0..=600.0).contains(&duration) {
+            return Err(format!("{label} fade-in duration must be 0–600 seconds"));
+        }
+    }
+    if options.video_fade_in_seconds > 0.0 && !options.preset.video() {
+        return Err("Video fade-in requires a video encoding preset".into());
+    }
     let audio_processing = options.audio_channels != 0 || options.audio_sample_rate != 0
-        || options.audio_gain_db != 0.0 || options.normalize_audio;
+        || options.audio_gain_db != 0.0 || options.normalize_audio
+        || options.audio_fade_in_seconds > 0.0;
     if audio_processing && !(options.preset.video() || options.preset.audio_only()) {
         return Err("Audio processing requires an encoding preset, not stream copy or analysis".into());
     }
@@ -167,6 +179,9 @@ fn audio_filters(o: &EncodeOptions) -> Vec<String> {
     let mut filters = Vec::new();
     if o.audio_gain_db != 0.0 { filters.push(format!("volume={:.2}dB", o.audio_gain_db)); }
     if o.normalize_audio { filters.push("loudnorm=I=-16:TP=-1.5:LRA=11".into()); }
+    if o.audio_fade_in_seconds > 0.0 {
+        filters.push(format!("afade=t=in:st=0:d={:.3}", o.audio_fade_in_seconds));
+    }
     filters
 }
 
@@ -413,6 +428,9 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
                 }
             }
             let mut video_filters: Vec<String> = Vec::new();
+            if o.video_fade_in_seconds > 0.0 {
+                video_filters.push(format!("fade=t=in:st=0:d={:.3}", o.video_fade_in_seconds));
+            }
             if o.deinterlace { video_filters.push("yadif=mode=send_frame:parity=auto:deint=all".into()); }
             if o.denoise { video_filters.push("hqdn3d=1.5:1.5:6:6".into()); }
             if o.crop_width > 0 {
@@ -865,6 +883,7 @@ mod tests {
             keyframe_interval: 0, faststart: true,
             target_width: 0, audio_bitrate_kbps: 192,
             start_seconds: 0.0, end_seconds: 0.0, normalize_audio: false,
+            audio_fade_in_seconds: 0.0, video_fade_in_seconds: 0.0,
             hardware_encoder: HardwareEncoder::Software,
             frame_rate: 0, crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
             rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
