@@ -1183,7 +1183,12 @@ impl EncoderApp {
                 self.settings.crop_x = 0; self.settings.crop_y = 0;
                 self.settings.rotate_degrees = 0;
                 self.settings.flip_horizontal = false; self.settings.flip_vertical = false;
-                self.settings.deinterlace = false; self.settings.broadcast_video_limiter = false; self.settings.denoise = false;
+                self.settings.deinterlace = false; self.settings.broadcast_video_limiter = false;
+                self.settings.video_detail_amount = 0;
+                self.settings.video_grain_amount = 0;
+                self.settings.video_nlmeans_strength = 0;
+                self.settings.video_deflicker_amount = 0;
+                self.settings.denoise = false;
                 self.settings.sharpen = false;
                 self.settings.brightness = 0.0; self.settings.contrast = 1.0;
                 self.settings.saturation = 1.0; self.settings.gamma = 1.0;
@@ -1348,6 +1353,18 @@ impl EncoderApp {
                         .range(0..=32)).changed();
                     changed |= ui.checkbox(&mut self.settings.broadcast_video_limiter,
                         "Limit video to broadcast/legal range").changed();
+                    ui.label("Detail (Shutter smartblur: -10 blur / +10 sharpen)");
+                    changed |= ui.add(egui::Slider::new(&mut self.settings.video_detail_amount,
+                        -10..=10)).changed();
+                    ui.label("Grain (Shutter intensity 0–100)");
+                    changed |= ui.add(egui::Slider::new(&mut self.settings.video_grain_amount,
+                        0..=100)).changed();
+                    ui.label("NLMeans denoise (0 = off; 1–10 strength)");
+                    changed |= ui.add(egui::Slider::new(&mut self.settings.video_nlmeans_strength,
+                        0..=10)).changed();
+                    ui.label("Smooth exposure / deflicker (0 = off; 1–100)");
+                    changed |= ui.add(egui::Slider::new(&mut self.settings.video_deflicker_amount,
+                        0..=100)).changed();
                     ui.label("Video fade-in (seconds, 0 = off)");
                     changed |= ui.add(egui::DragValue::new(&mut self.settings.video_fade_in_seconds)
                         .range(0.0..=600.0).speed(0.1)).changed();
@@ -1791,6 +1808,11 @@ fn quality_setting_label(encoder: HardwareEncoder) -> &'static str {
 
 fn sanitize_codec_settings(settings: &mut Settings) {
     if !settings.preset.video() {
+        settings.video_detail_amount = 0;
+        settings.video_grain_amount = 0;
+        settings.video_nlmeans_strength = 0;
+        settings.video_deflicker_amount = 0;
+        settings.broadcast_video_limiter = false;
         settings.video_fade_in_seconds = 0.0;
         settings.video_fade_out_seconds = 0.0;
     }
