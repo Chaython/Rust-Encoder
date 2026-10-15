@@ -204,6 +204,29 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
             applied.push("Horizontal mirror".into());
         }
     }
+    // Shutter stores fade durations as frame counts, while our FFmpeg
+    // controls use seconds. Translate only with a known integer conform FPS.
+    for (enabled, duration_key, is_audio) in [
+        ("caseAudioFadeIn", "spinnerAudioFadeIn", true),
+        ("caseVideoFadeIn", "spinnerVideoFadeIn", false),
+    ] {
+        if get(enabled) != Some("true") { continue; }
+        if !preset.video() && !(is_audio && preset.audio_only()) {
+            skipped.push(format!("{enabled}: incompatible with selected output"));
+            continue;
+        }
+        let frames = get(duration_key).and_then(|s| s.parse::<u32>().ok());
+        if let (Some(frames), fps) = (frames, settings.frame_rate) {
+            if frames > 0 && fps > 0 && (frames as f32 / fps as f32) <= 600.0 {
+                let seconds = frames as f32 / fps as f32;
+                if is_audio { settings.audio_fade_in_seconds = seconds; }
+                else { settings.video_fade_in_seconds = seconds; }
+                applied.push(format!("{enabled}: {frames} frames at {fps} FPS"));
+                continue;
+            }
+        }
+        skipped.push(format!("{enabled}: cannot convert frame duration without supported conform FPS"));
+    }
     // Shutter Encoder's QMax checkbox controls quantizer constraints;
     // it is NOT an encoding-speed preset. Never substitute a speed setting.
     if get("caseQMax") == Some("true") && preset.video() {
@@ -217,8 +240,8 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
     // have no equivalent yet. Saved Swing snapshots include disabled controls
     // and selected UI defaults; only active values should trigger warnings.
     const UNSUPPORTED_ACTIVE_OPTIONS: &[&str] = &[
-        "caseAudioOffset", "caseAudioFadeIn", "caseAudioFadeOut",
-        "caseVideoFadeIn", "caseVideoFadeOut", "caseMixAudio",
+        "caseAudioOffset", "caseAudioFadeOut",
+        "caseVideoFadeOut", "caseMixAudio",
         "caseSplitAudio", "caseConvertAudioFramerate", "caseForceTune",
         "caseForceLevel", "caseForceOutput", "caseForcePreset",
         "caseForceQuality", "caseForceSpeed", "caseForcerEntrelacement",
@@ -238,6 +261,7 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         "caseNormalizeAudio", "caseFastStart", "caseGOP", "case2pass",
         "caseQMax", "caseForcerDesentrelacement", "caseConform", "caseSampleRate",
         "caseRotate", "caseMiror", "caseChangeAudioCodec",
+        "caseVideoFadeIn", "caseAudioFadeIn",
         "caseAudioOffset", "caseAudioFadeIn", "caseAudioFadeOut",
         "caseVideoFadeIn", "caseVideoFadeOut", "caseMixAudio",
         "caseSplitAudio", "caseConvertAudioFramerate", "caseForceTune",
