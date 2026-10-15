@@ -98,9 +98,11 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
     }
     if get("caseNormalizeAudio") == Some("true") {
         let target = get("comboNormalizeAudio").map(str::trim);
-        let parsed_target = target
-            .and_then(|raw| raw.to_ascii_uppercase().strip_suffix(" LUFS")
-                .and_then(|number| number.trim().parse::<i8>().ok()));
+        let parsed_target = target.and_then(|raw| {
+            let normalized = raw.to_ascii_uppercase();
+            normalized.strip_suffix(" LUFS")
+                .and_then(|number| number.trim().parse::<i8>().ok())
+        });
         if (preset.video() || preset.audio_only())
             && parsed_target.is_some_and(|value| (-31..=-5).contains(&value)) {
             let lufs = parsed_target.unwrap_or(-16);
