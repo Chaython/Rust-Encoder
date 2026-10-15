@@ -1,7 +1,7 @@
 //! Best-effort, read-only importer for Shutter Encoder's XML .enc presets.
 //! Never execute embedded content or silently apply unsupported options.
 use crate::model::{HardwareEncoder, Preset, Settings};
-use std::{collections::HashMap, fs, path::Path};
+use std::{collections::HashMap, fs, io::Read, path::Path};
 
 pub struct ImportResult {
     pub settings: Settings,
@@ -10,9 +10,21 @@ pub struct ImportResult {
 }
 
 pub fn import_file(path: &Path, base: &Settings) -> Result<ImportResult, String> {
-    let metadata = fs::metadata(path).map_err(|e| format!("Cannot read preset: {e}"))?;
-    if metadata.len() > 2_000_000 { return Err("Preset exceeds 2 MB limit".into()); }
-    let xml = fs::read_to_string(path).map_err(|e| format!("Invalid preset text: {e}"))?;
+    const MAX_XML_BYTES: u64 = 2_000_000;
+    let file = fs::File::open(path).map_err(|e| format!("Cannot open preset: {e}"))?;
+    if file.metadata().map_err(|e| format!("Cannot inspect preset: {e}"))?.len() > MAX_XML_BYTES {
+        return Err("Preset exceeds 2 MB limit".into());
+    }
+    // Enforce the size limit while reading, too: the file might change
+    // between metadata inspection and consumption.
+    let mut bytes = Vec::new();
+    file.take(MAX_XML_BYTES + 1).read_to_end(&mut bytes)
+        .map_err(|e| format!("Cannot read preset: {e}"))?;
+    if bytes.len() as u64 > MAX_XML_BYTES {
+        return Err("Preset exceeds 2 MB limit".into());
+    }
+    let xml = String::from_utf8(bytes)
+        .map_err(|e| format!("Invalid UTF-8 preset text: {e}"))?;
     import_xml(&xml, base)
 }
 
