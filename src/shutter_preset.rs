@@ -21,7 +21,11 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         return Err("XML entity declarations are not supported".into());
     }
     let document = roxmltree::Document::parse(xml).map_err(|e| format!("Invalid .enc XML: {e}"))?;
-    if document.root_element().tag_name().name() != "Settings" {
+    let root = document.root_element();
+    let is_settings = root.has_tag_name("Settings");
+    let is_shutter_export = root.has_tag_name("Shutter")
+        && root.children().any(|child| child.has_tag_name("Settings"));
+    if !is_settings && !is_shutter_export {
         return Err("Not a Shutter Encoder settings XML document".into());
     }
     let mut values = HashMap::new();
@@ -274,6 +278,12 @@ mod tests {
         assert!(result.skipped.iter().any(|s| s.contains("caseWatermark")));
         assert!(!result.skipped.iter().any(|s| s.contains("caseUnrelated")));
         assert!(!result.skipped.iter().any(|s| s.contains("caseFastStart")));
+    }
+    #[test]
+    fn accepts_native_shutter_xml_wrapper() {
+        let xml = "<Shutter><Settings><Component><Name>comboFonctions</Name><Value>H.264</Value></Component></Settings></Shutter>";
+        let result = import_xml(xml, &Settings::default()).unwrap();
+        assert_eq!(result.settings.preset, Preset::H264);
     }
     #[test]
     fn rejects_unrelated_xml_even_with_spoofed_component_names() {
