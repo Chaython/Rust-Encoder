@@ -12,7 +12,7 @@ fn options(preset: Preset) -> EncodeOptions {
         max_video_bitrate_kbps: 0, encoder_speed: 1, encoder_threads: 0,
         keyframe_interval: 0, faststart: true,
         target_width: 0, audio_bitrate_kbps: 128,
-        start_seconds: 0.0, end_seconds: 0.0, normalize_audio: false, audio_fade_in_seconds: 0.0, video_fade_in_seconds: 0.0, audio_fade_out_seconds: 0.0, video_fade_out_seconds: 0.0,
+        start_seconds: 0.0, end_seconds: 0.0, normalize_audio: false, normalization_target_lufs: -16, audio_fade_in_seconds: 0.0, video_fade_in_seconds: 0.0, audio_fade_out_seconds: 0.0, video_fade_out_seconds: 0.0,
         hardware_encoder: HardwareEncoder::Software, frame_rate: 0, frame_rate_numerator: 0, frame_rate_denominator: 1,
         crop_width: 0, crop_height: 0, crop_x: 0, crop_y: 0,
         rotate_degrees: 0, flip_horizontal: false, flip_vertical: false,
