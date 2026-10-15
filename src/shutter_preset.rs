@@ -227,6 +227,18 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         }
         skipped.push(format!("{enabled}: cannot convert frame duration without supported conform FPS"));
     }
+    // Fade-outs need a known output duration; Shutter keeps the end position
+    // in its own trim UI, which is not yet translated. Never apply a fade
+    // at the beginning in place of a requested fade-out.
+    for (control, spinner) in [
+        ("caseAudioFadeOut", "spinnerAudioFadeOut"),
+        ("caseVideoFadeOut", "spinnerVideoFadeOut"),
+    ] {
+        if get(control) == Some("true") {
+            let frames = get(spinner).unwrap_or("unknown");
+            skipped.push(format!("{control}: fade-out of {frames} frames needs a mapped trim end"));
+        }
+    }
     // Shutter Encoder's QMax checkbox controls quantizer constraints;
     // it is NOT an encoding-speed preset. Never substitute a speed setting.
     if get("caseQMax") == Some("true") && preset.video() {
@@ -240,8 +252,8 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
     // have no equivalent yet. Saved Swing snapshots include disabled controls
     // and selected UI defaults; only active values should trigger warnings.
     const UNSUPPORTED_ACTIVE_OPTIONS: &[&str] = &[
-        "caseAudioOffset", "caseAudioFadeOut",
-        "caseVideoFadeOut", "caseMixAudio",
+        "caseAudioOffset",
+        "caseMixAudio",
         "caseSplitAudio", "caseConvertAudioFramerate", "caseForceTune",
         "caseForceLevel", "caseForceOutput", "caseForcePreset",
         "caseForceQuality", "caseForceSpeed", "caseForcerEntrelacement",
