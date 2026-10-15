@@ -1395,6 +1395,17 @@ impl EncoderApp {
                     changed |= ui.add_enabled(self.settings.audio_stream != -2,
                         egui::DragValue::new(&mut self.settings.audio_equalizer_db)
                             .range(-24.0..=24.0).speed(0.5)).changed();
+                    ui.label("Five-band graphic EQ (dB; 0 = flat)");
+                    ui.horizontal_wrapped(|ui| {
+                        for (index, frequency) in [100, 300, 1000, 3000, 10000].iter().enumerate() {
+                            ui.vertical(|ui| {
+                                ui.small(format!("{frequency} Hz"));
+                                changed |= ui.add_enabled(self.settings.audio_stream != -2,
+                                    egui::DragValue::new(&mut self.settings.audio_eq_bands_db[index])
+                                        .range(-24.0..=24.0).speed(0.5)).changed();
+                            });
+                        }
+                    });
                     ui.label("Audio offset (seconds; + delay / - advance)");
                     changed |= ui.add_enabled(self.settings.audio_stream != -2,
                         egui::DragValue::new(&mut self.settings.audio_offset_seconds)
@@ -1789,6 +1800,7 @@ fn sanitize_codec_settings(settings: &mut Settings) {
         settings.audio_highpass_hz = 0;
         settings.audio_lowpass_hz = 0;
         settings.audio_equalizer_db = 0.0;
+        settings.audio_eq_bands_db = [0.0; 5];
     }
     if !settings.use_video_bitrate {
         settings.max_video_bitrate_kbps = 0;
