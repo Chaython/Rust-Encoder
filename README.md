@@ -65,7 +65,7 @@ For identical output quality, speed settings change encoding time and compressio
 
 ## Basic audio frequency filters
 
-The encoding settings now include independent high-pass and low-pass cutoffs (20–20,000 Hz, with 0 disabling either filter). These use FFmpeg's `highpass` and `lowpass` audio filters, and reject combinations where the high-pass frequency is at or above the low-pass frequency. This is basic frequency filtering, not full Shutter Encoder graphic equalizer parity.
+The encoding settings now include independent high-pass and low-pass cutoffs (20–20,000 Hz, with 0 disabling either filter). These use FFmpeg's `highpass` and `lowpass` audio filters, and reject combinations where the high-pass frequency is at or above the low-pass frequency. The encoder also provides a single-band parametric EQ (20–20,000 Hz center, -24 to +24 dB gain) using FFmpeg's `equalizer` filter. These are basic audio corrections, not full Shutter Encoder graphic equalizer parity.
 
 ## Audio synchronization offset
 
