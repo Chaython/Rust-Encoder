@@ -97,13 +97,16 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         } else { skipped.push(format!("Unrecognized hardware choice: {accel}")); }
     }
     if get("caseNormalizeAudio") == Some("true") {
-        // Rust Encoder currently has a fixed -16 LUFS loudnorm target.
-        // Importing a different Shutter target as -16 LUFS changes loudness.
         let target = get("comboNormalizeAudio").map(str::trim);
+        let parsed_target = target
+            .and_then(|raw| raw.to_ascii_uppercase().strip_suffix(" LUFS")
+                .and_then(|number| number.trim().parse::<i8>().ok()));
         if (preset.video() || preset.audio_only())
-            && target.is_some_and(|s| s.eq_ignore_ascii_case("-16 LUFS")) {
+            && parsed_target.is_some_and(|value| (-31..=-5).contains(&value)) {
+            let lufs = parsed_target.unwrap_or(-16);
             settings.normalize_audio = true;
-            applied.push("Audio normalization (-16 LUFS)".into());
+            settings.normalization_target_lufs = lufs;
+            applied.push(format!("Audio normalization ({lufs} LUFS)"));
         } else {
             skipped.push(format!("Audio normalization target requires manual review: {}",
                 target.unwrap_or("unspecified")));
@@ -537,8 +540,8 @@ mod tests {
         let supported = import_xml(&xml("-16 LUFS"), &Settings::default()).unwrap();
         assert!(supported.settings.normalize_audio);
         let different = import_xml(&xml("-23 LUFS"), &Settings::default()).unwrap();
-        assert!(!different.settings.normalize_audio);
-        assert!(different.skipped.iter().any(|s| s.contains("-23 LUFS")));
+        assert!(different.settings.normalize_audio);
+        assert_eq!(different.settings.normalization_target_lufs, -23);
     }
     #[test]
     fn refuses_unknown_function_and_entity_declaration() {
