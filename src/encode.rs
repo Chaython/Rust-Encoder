@@ -1606,6 +1606,50 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]
+    fn selected_audio_tracks_mix_once_and_keep_effects_on_the_mixed_output() {
+        let dir = std::env::temp_dir().join(format!("rust-encoder-mix-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.mkv");
+        fs::write(&input, b"fixture").unwrap();
+        let mut o = options(Preset::H264);
+        o.audio_stream = 0;
+        o.audio_mix_secondary_stream = 1;
+        o.audio_gain_db = -3.0;
+        o.audio_highpass_hz = 80;
+        let args = build_args(&input, &dir.join("mixed.mp4"), &o).unwrap();
+        assert!(args.windows(2).any(|w| w[0] == "-filter_complex" && {
+            let graph = w[1].to_string_lossy();
+            graph.starts_with("[0:a:0][0:a:1]amix=inputs=2:duration=longest:dropout_transition=0:normalize=1")
+                && graph.contains("highpass=f=80")
+                && graph.ends_with("[mixed_audio]")
+        }));
+        assert!(args.windows(2).any(|w| w[0] == "-map" && w[1] == "[mixed_audio]"));
+        assert!(!args.iter().any(|v| v == "-af"));
+
+        o.preset = Preset::Wav;
+        let audio_args = build_args(&input, &dir.join("mixed.wav"), &o).unwrap();
+        assert!(audio_args.windows(2).any(|w| w[0] == "-map" && w[1] == "[mixed_audio]"));
+        assert!(!audio_args.iter().any(|v| v == "-af"));
+
+        o.audio_mix_secondary_stream = 0;
+        assert!(validate_options(&o).is_err());
+        o.audio_mix_secondary_stream = 1;
+        o.audio_stream = -1;
+        assert!(validate_options(&o).is_err());
+        o.audio_stream = 0;
+        o.audio_mix_secondary_stream = 32;
+        assert!(validate_options(&o).is_err());
+        o.audio_mix_secondary_stream = 1;
+        o.preset = Preset::RemuxMkv;
+        assert!(validate_options(&o).is_err());
+        o.preset = Preset::H264;
+        o.use_video_bitrate = true;
+        o.two_pass = true;
+        assert!(validate_options(&o).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn audio_offsets_generate_delay_or_trim_filters() {
         let dir = std::env::temp_dir().join(format!("rust-encoder-offset-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();

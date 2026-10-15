@@ -325,3 +325,43 @@ fn vp9_ten_bit_profile_two_roundtrip() {
     }
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn two_selected_audio_streams_mix_into_one_encodable_track() {
+    if !ffmpeg_available()
+        || Command::new("ffprobe").arg("-version").output().is_err() {
+        eprintln!("Skipping mix integration: FFmpeg/FFprobe unavailable");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!(
+        "rust-encoder-mix-e2e-{}-{:?}", std::process::id(), std::thread::current().id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("two-tracks.mkv");
+    command_ok(Command::new("ffmpeg").args([
+        "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+        "-f", "lavfi", "-i", "testsrc2=size=128x96:rate=10:duration=1",
+        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=1",
+        "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=1",
+        "-map", "0:v", "-map", "1:a", "-map", "2:a",
+        "-c:v", "mpeg4", "-c:a", "aac", "-shortest",
+    ]).arg(&input));
+
+    for (preset, name) in [(Preset::H264, "mixed.mp4"), (Preset::Wav, "mixed.wav")] {
+        let mut o = options(preset);
+        o.audio_stream = 0;
+        o.audio_mix_secondary_stream = 1;
+        o.audio_gain_db = -3.0;
+        let output = dir.join(name);
+        let args = encode::build_args(&input, &output, &o).unwrap();
+        command_ok(Command::new("ffmpeg").args(args));
+        let streams = Command::new("ffprobe").args([
+            "-v", "error", "-select_streams", "a",
+            "-show_entries", "stream=index", "-of", "csv=p=0",
+        ]).arg(&output).output().unwrap();
+        assert!(streams.status.success());
+        assert_eq!(String::from_utf8_lossy(&streams.stdout).lines().count(), 1,
+            "expected one mixed audio stream in {}", name);
+    }
+    fs::remove_dir_all(dir).unwrap();
+}

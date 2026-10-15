@@ -2139,6 +2139,23 @@ mod tests {
         assert_eq!(settings.video_fade_in_seconds, 0.0);
     }
     #[test]
+    fn mixing_requires_specific_audio_tracks_and_resets_on_stream_copy() {
+        let mut s = Settings::default();
+        s.audio_stream = 0;
+        s.audio_mix_secondary_stream = 1;
+        sanitize_codec_settings(&mut s);
+        assert_eq!(s.audio_mix_secondary_stream, 1);
+        s.audio_stream = -1;
+        sanitize_codec_settings(&mut s);
+        assert_eq!(s.audio_mix_secondary_stream, -1);
+        s.audio_stream = 0;
+        s.audio_mix_secondary_stream = 1;
+        s.preset = Preset::RemuxMkv;
+        sanitize_codec_settings(&mut s);
+        assert_eq!(s.audio_mix_secondary_stream, -1);
+    }
+
+    #[test]
     fn imported_video_effects_are_cleared_for_audio_and_copy_modes() {
         let mut settings = Settings::default();
         settings.video_detail_amount = 5;
