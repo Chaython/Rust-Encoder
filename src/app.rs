@@ -1387,6 +1387,14 @@ impl EncoderApp {
                     changed |= ui.add_enabled(self.settings.audio_stream != -2,
                         egui::DragValue::new(&mut self.settings.audio_lowpass_hz)
                             .range(0..=20_000).speed(10)).changed();
+                    ui.label("Parametric EQ center (Hz)");
+                    changed |= ui.add_enabled(self.settings.audio_stream != -2,
+                        egui::DragValue::new(&mut self.settings.audio_equalizer_hz)
+                            .range(20..=20_000).speed(10)).changed();
+                    ui.label("Parametric EQ gain (dB; 0 = off)");
+                    changed |= ui.add_enabled(self.settings.audio_stream != -2,
+                        egui::DragValue::new(&mut self.settings.audio_equalizer_db)
+                            .range(-24.0..=24.0).speed(0.5)).changed();
                     ui.label("Audio offset (seconds; + delay / - advance)");
                     changed |= ui.add_enabled(self.settings.audio_stream != -2,
                         egui::DragValue::new(&mut self.settings.audio_offset_seconds)
@@ -1780,6 +1788,7 @@ fn sanitize_codec_settings(settings: &mut Settings) {
         settings.audio_offset_seconds = 0.0;
         settings.audio_highpass_hz = 0;
         settings.audio_lowpass_hz = 0;
+        settings.audio_equalizer_db = 0.0;
     }
     if !settings.use_video_bitrate {
         settings.max_video_bitrate_kbps = 0;
