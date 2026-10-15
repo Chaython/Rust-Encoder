@@ -166,10 +166,23 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         settings.deinterlace = true;
         applied.push("Deinterlacing".into());
     }
-    // The legacy UI contains hundreds of settings without Rust equivalents.
-    // Surface untranslated enabled controls instead of pretending full parity.
-    for key in ["caseEnableCrop", "caseLUTs", "caseWatermark", "caseAddTimecode"] {
-        if get(key) == Some("true") { skipped.push(format!("Unsupported legacy option: {key}")); }
+    // Shutter writes a large snapshot of Swing controls to each preset.
+    // Report ALL active, unmapped checkboxes instead of silently losing
+    // edits that are not in a small manually curated warning list.
+    const MAPPED_CHECKBOXES: &[&str] = &[
+        "caseNormalizeAudio", "caseFastStart", "caseGOP", "case2pass",
+        "caseQMax", "caseForcerDesentrelacement", "caseConform",
+    ];
+    for component in document.descendants().filter(|n| n.has_tag_name("Component")) {
+        let child = |tag| component.children().find(|c| c.has_tag_name(tag))
+            .and_then(|c| c.text()).map(str::trim);
+        if child("Type") == Some("JCheckBox") && child("Value") == Some("true") {
+            if let Some(name) = child("Name") {
+                if !MAPPED_CHECKBOXES.contains(&name) {
+                    skipped.push(format!("Unmapped enabled setting: {name}"));
+                }
+            }
+        }
     }
     // Prevent combinations that Rust Encoder cannot run.
     if settings.hardware_encoder == HardwareEncoder::VideoToolbox {
@@ -245,6 +258,19 @@ mod tests {
         let imported = import_xml(xml, &Settings::default()).unwrap();
         assert_eq!(imported.settings.encoder_speed, Settings::default().encoder_speed);
         assert!(imported.skipped.iter().any(|item| item.contains("QMax")));
+    }
+    #[test]
+    fn reports_unmapped_enabled_checkboxes_but_not_disabled_ones() {
+        let xml = r#"<Settings>
+          <Component><Type>JComboBox</Type><Name>comboFonctions</Name><Value>H.264</Value></Component>
+          <Component><Type>JCheckBox</Type><Name>caseWatermark</Name><Value>true</Value></Component>
+          <Component><Type>JCheckBox</Type><Name>caseUnrelated</Name><Value>false</Value></Component>
+          <Component><Type>JCheckBox</Type><Name>caseFastStart</Name><Value>true</Value></Component>
+        </Settings>"#;
+        let result = import_xml(xml, &Settings::default()).unwrap();
+        assert!(result.skipped.iter().any(|s| s.contains("caseWatermark")));
+        assert!(!result.skipped.iter().any(|s| s.contains("caseUnrelated")));
+        assert!(!result.skipped.iter().any(|s| s.contains("caseFastStart")));
     }
     #[test]
     fn refuses_unknown_function_and_entity_declaration() {
