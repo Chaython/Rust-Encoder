@@ -223,7 +223,8 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         "caseForceLevel", "caseForceOutput", "caseForcePreset",
         "caseForceQuality", "caseForceSpeed", "caseForcerEntrelacement",
         "caseForcerInversion", "caseForcerDAR", "caseSequenceFPS",
-        "caseMixAudio",
+        "caseMixAudio", "caseGamma", "caseColormatrix", "caseColorspace",
+        "caseLUTs", "caseDenoise", "caseEnableCrop",
     ];
     for name in UNSUPPORTED_ACTIVE_OPTIONS {
         if get(name) == Some("true") {
@@ -399,6 +400,17 @@ mod tests {
         </Settings></Shutter>"#;
         let result = import_xml(xml, &Settings::default()).unwrap();
         assert!(result.skipped.iter().any(|s| s.contains("AC3")));
+    }
+    #[test]
+    fn flags_active_filters_not_yet_equivalent_to_shutter() {
+        let xml = r#"<Shutter><Settings>
+            <Component><Name>comboFonctions</Name><Value>H.264</Value></Component>
+            <Component><Name>caseDenoise</Name><Value>true</Value></Component>
+            <Component><Name>caseLUTs</Name><Value>true</Value></Component>
+        </Settings></Shutter>"#;
+        let result = import_xml(xml, &Settings::default()).unwrap();
+        assert!(result.skipped.iter().any(|s| s.contains("caseDenoise")));
+        assert!(result.skipped.iter().any(|s| s.contains("caseLUTs")));
     }
     #[test]
     fn refuses_unknown_function_and_entity_declaration() {
