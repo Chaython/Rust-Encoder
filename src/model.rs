@@ -425,6 +425,20 @@ mod tests {
     }
 
     #[test]
+    fn legacy_profile_without_recent_audio_fields_loads_safe_defaults() {
+        let json = r#"{"preset":"H264","quality":24}"#;
+        let settings: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(settings.normalization_target_lufs, -16);
+        assert_eq!(settings.frame_rate_denominator, 1);
+        assert_eq!(settings.audio_equalizer_hz, 1000);
+        assert_eq!(settings.audio_eq_bands_db, [0.0; 5]);
+        assert_eq!(settings.audio_offset_seconds, 0.0);
+        assert_eq!(settings.audio_fade_in_seconds, 0.0);
+        assert_eq!(settings.audio_fade_out_seconds, 0.0);
+        assert_eq!(settings.audio_highpass_hz, 0);
+        assert_eq!(settings.audio_lowpass_hz, 0);
+    }
+    #[test]
     fn settings_json_roundtrip() {
         let mut a = Settings::default();
         a.preset = Preset::Flac;
