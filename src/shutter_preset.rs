@@ -21,6 +21,9 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         return Err("XML entity declarations are not supported".into());
     }
     let document = roxmltree::Document::parse(xml).map_err(|e| format!("Invalid .enc XML: {e}"))?;
+    if document.root_element().tag_name().name() != "Settings" {
+        return Err("Not a Shutter Encoder settings XML document".into());
+    }
     let mut values = HashMap::new();
     for component in document.descendants().filter(|n| n.has_tag_name("Component")) {
         let child = |name| component.children().find(|c| c.has_tag_name(name))
@@ -271,6 +274,11 @@ mod tests {
         assert!(result.skipped.iter().any(|s| s.contains("caseWatermark")));
         assert!(!result.skipped.iter().any(|s| s.contains("caseUnrelated")));
         assert!(!result.skipped.iter().any(|s| s.contains("caseFastStart")));
+    }
+    #[test]
+    fn rejects_unrelated_xml_even_with_spoofed_component_names() {
+        let xml = "<Unrelated><Component><Name>comboFonctions</Name><Value>H.264</Value></Component></Unrelated>";
+        assert!(import_xml(xml, &Settings::default()).is_err());
     }
     #[test]
     fn refuses_unknown_function_and_entity_declaration() {
