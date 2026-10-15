@@ -1342,6 +1342,22 @@ mod tests {
     }
 
     #[test]
+    fn fractional_fps_uses_exact_rational_ffmpeg_filter() {
+        let dir = std::env::temp_dir().join(format!("rust-encoder-rational-fps-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.mkv");
+        fs::write(&input, b"fixture").unwrap();
+        let mut o = options(Preset::H264);
+        o.frame_rate_numerator = 30_000;
+        o.frame_rate_denominator = 1001;
+        let args = build_args(&input, &dir.join("output.mp4"), &o).unwrap();
+        assert!(args.windows(2).any(|p| p[0] == "-vf"
+            && p[1].to_string_lossy().contains("fps=30000/1001")));
+        o.frame_rate_denominator = 0;
+        assert!(validate_options(&o).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn fade_filters_generate_exact_ffmpeg_arguments() {
         let dir = std::env::temp_dir().join(format!(
             "rust-encoder-fades-{}-{:?}", std::process::id(), std::thread::current().id()));
