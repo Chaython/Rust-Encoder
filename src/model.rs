@@ -171,7 +171,9 @@ pub struct Settings {
     #[serde(default = "default_normalization_target_lufs")]
     pub normalization_target_lufs: i8,
     #[serde(default)]
+    #[serde(default)]
     pub audio_fade_in_seconds: f32,
+    #[serde(default)]
     #[serde(default)]
     pub video_fade_in_seconds: f32,
     #[serde(default)]
