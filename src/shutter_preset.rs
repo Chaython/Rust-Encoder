@@ -329,7 +329,7 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         "caseForceQuality", "caseForceSpeed", "caseForcerEntrelacement",
         "caseForcerInversion", "caseForcerDAR", "caseSequenceFPS",
         "caseGamma", "caseColormatrix", "caseColorspace",
-        "caseLUTs", "caseDenoise", "caseEnableCrop",
+        "caseLUTs", "caseDenoise", "caseEnableCrop", "caseLimiter",
     ];
     for name in UNSUPPORTED_ACTIVE_OPTIONS {
         if get(name) == Some("true") {
@@ -579,6 +579,16 @@ mod tests {
         let unknown = import_xml(&xml(false), &Settings::default()).unwrap();
         assert_eq!(unknown.settings.audio_offset_seconds, 0.0);
         assert!(unknown.skipped.iter().any(|s| s.contains("Audio offset")));
+    }
+    #[test]
+    fn does_not_confuse_shutter_video_limiter_with_audio_limiter() {
+        let xml = r#"<Shutter><Settings>
+           <Component><Name>comboFonctions</Name><Value>H.264</Value></Component>
+           <Component><Type>JCheckBox</Type><Name>caseLimiter</Name><Value>true</Value></Component>
+        </Settings></Shutter>"#;
+        let imported = import_xml(xml, &Settings::default()).unwrap();
+        assert!(imported.skipped.iter().any(|s| s.contains("caseLimiter")));
+        assert!(!imported.applied.iter().any(|s| s.contains("limiter")));
     }
     #[test]
     fn refuses_unknown_function_and_entity_declaration() {
