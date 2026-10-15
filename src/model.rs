@@ -208,6 +208,10 @@ pub struct Settings {
     pub audio_gain_db: f32, // -30..30 dB
     #[serde(default)]
     pub audio_offset_seconds: f32, // positive delays audio; negative advances it
+    #[serde(default)]
+    pub audio_highpass_hz: u32, // 0 disables
+    #[serde(default)]
+    pub audio_lowpass_hz: u32, // 0 disables
     pub output_dir: String,
     pub ffmpeg_path: String,
     pub ffprobe_path: String,
@@ -234,7 +238,7 @@ impl Default for Settings {
             audio_stream: -1, subtitle_stream: -1, video_stream: 0,
             deinterlace: false, denoise: false, sharpen: false,
             brightness: 0.0, contrast: 1.0, saturation: 1.0, gamma: 1.0,
-            audio_channels: 0, audio_sample_rate: 0, audio_gain_db: 0.0, audio_offset_seconds: 0.0,
+            audio_channels: 0, audio_sample_rate: 0, audio_gain_db: 0.0, audio_offset_seconds: 0.0, audio_highpass_hz: 0, audio_lowpass_hz: 0,
             output_dir: String::new(),
             ffmpeg_path: String::new(), ffprobe_path: String::new(),
             ffplay_path: String::new(), dark_theme: true,
@@ -292,6 +296,8 @@ pub struct EncodeOptions {
     pub audio_sample_rate: u32, // 0 original
     pub audio_gain_db: f32, // -30..30 dB
     pub audio_offset_seconds: f32, // positive delays audio; negative advances it
+    pub audio_highpass_hz: u32, // 0 disables
+    pub audio_lowpass_hz: u32, // 0 disables
     pub output_dir: Option<PathBuf>,
     pub ffmpeg: PathBuf,
 }
@@ -331,6 +337,8 @@ impl Settings {
             audio_channels: self.audio_channels, audio_sample_rate: self.audio_sample_rate,
             audio_gain_db: self.audio_gain_db,
             audio_offset_seconds: self.audio_offset_seconds,
+            audio_highpass_hz: self.audio_highpass_hz,
+            audio_lowpass_hz: self.audio_lowpass_hz,
             output_dir: (!self.output_dir.is_empty()).then(|| PathBuf::from(&self.output_dir)),
             ffmpeg: resolve_tool("ffmpeg", &self.ffmpeg_path),
         }
