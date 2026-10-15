@@ -173,12 +173,34 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         settings.deinterlace = true;
         applied.push("Deinterlacing".into());
     }
+    // Catch additional non-checkbox features that are explicitly enabled but
+    // have no equivalent yet. Saved Swing snapshots include disabled controls
+    // and selected UI defaults; only active values should trigger warnings.
+    const UNSUPPORTED_ACTIVE_OPTIONS: &[&str] = &[
+        "caseAudioOffset", "caseAudioFadeIn", "caseAudioFadeOut",
+        "caseVideoFadeIn", "caseVideoFadeOut", "caseMixAudio",
+        "caseSplitAudio", "caseConvertAudioFramerate", "caseForceTune",
+        "caseForceLevel", "caseForceOutput", "caseForcePreset",
+        "caseForceQuality", "caseForceSpeed", "caseForcerEntrelacement",
+        "caseForcerInversion", "caseForcerDAR", "caseSequenceFPS",
+    ];
+    for name in UNSUPPORTED_ACTIVE_OPTIONS {
+        if get(name) == Some("true") {
+            skipped.push(format!("Unsupported enabled Shutter option: {name}"));
+        }
+    }
     // Shutter writes a large snapshot of Swing controls to each preset.
     // Report ALL active, unmapped checkboxes instead of silently losing
     // edits that are not in a small manually curated warning list.
     const MAPPED_CHECKBOXES: &[&str] = &[
         "caseNormalizeAudio", "caseFastStart", "caseGOP", "case2pass",
         "caseQMax", "caseForcerDesentrelacement", "caseConform",
+        "caseAudioOffset", "caseAudioFadeIn", "caseAudioFadeOut",
+        "caseVideoFadeIn", "caseVideoFadeOut", "caseMixAudio",
+        "caseSplitAudio", "caseConvertAudioFramerate", "caseForceTune",
+        "caseForceLevel", "caseForceOutput", "caseForcePreset",
+        "caseForceQuality", "caseForceSpeed", "caseForcerEntrelacement",
+        "caseForcerInversion", "caseForcerDAR", "caseSequenceFPS",
     ];
     for component in document.descendants().filter(|n| n.has_tag_name("Component")) {
         let child = |tag| component.children().find(|c| c.has_tag_name(tag))
@@ -289,6 +311,19 @@ mod tests {
     fn rejects_unrelated_xml_even_with_spoofed_component_names() {
         let xml = "<Unrelated><Component><Name>comboFonctions</Name><Value>H.264</Value></Component></Unrelated>";
         assert!(import_xml(xml, &Settings::default()).is_err());
+    }
+    #[test]
+    fn warns_about_unsupported_active_audio_and_video_controls() {
+        let xml = r#"<Shutter><Settings>
+          <Component><Name>comboFonctions</Name><Value>H.264</Value></Component>
+          <Component><Name>caseAudioOffset</Name><Value>true</Value></Component>
+          <Component><Name>caseVideoFadeIn</Name><Value>true</Value></Component>
+          <Component><Name>caseAudioFadeOut</Name><Value>false</Value></Component>
+        </Settings></Shutter>"#;
+        let result = import_xml(xml, &Settings::default()).unwrap();
+        assert!(result.skipped.iter().any(|item| item.contains("caseAudioOffset")));
+        assert!(result.skipped.iter().any(|item| item.contains("caseVideoFadeIn")));
+        assert!(!result.skipped.iter().any(|item| item.contains("caseAudioFadeOut")));
     }
     #[test]
     fn refuses_unknown_function_and_entity_declaration() {
