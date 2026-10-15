@@ -164,6 +164,12 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
             skipped.push("Conform FPS enabled without a stored frame rate".into());
         }
     }
+    // Shutter's "caseSampleRate" specifically forces 48 kHz (lbl48k),
+    // unlike the per-track routing selectors.
+    if get("caseSampleRate") == Some("true") && (preset.video() || preset.audio_only()) {
+        settings.audio_sample_rate = 48_000;
+        applied.push("Force audio sample rate to 48 kHz".into());
+    }
     // Shutter Encoder's QMax checkbox controls quantizer constraints;
     // it is NOT an encoding-speed preset. Never substitute a speed setting.
     if get("caseQMax") == Some("true") && preset.video() {
@@ -194,7 +200,7 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
     // edits that are not in a small manually curated warning list.
     const MAPPED_CHECKBOXES: &[&str] = &[
         "caseNormalizeAudio", "caseFastStart", "caseGOP", "case2pass",
-        "caseQMax", "caseForcerDesentrelacement", "caseConform",
+        "caseQMax", "caseForcerDesentrelacement", "caseConform", "caseSampleRate",
         "caseAudioOffset", "caseAudioFadeIn", "caseAudioFadeOut",
         "caseVideoFadeIn", "caseVideoFadeOut", "caseMixAudio",
         "caseSplitAudio", "caseConvertAudioFramerate", "caseForceTune",
@@ -324,6 +330,16 @@ mod tests {
         assert!(result.skipped.iter().any(|item| item.contains("caseAudioOffset")));
         assert!(result.skipped.iter().any(|item| item.contains("caseVideoFadeIn")));
         assert!(!result.skipped.iter().any(|item| item.contains("caseAudioFadeOut")));
+    }
+    #[test]
+    fn imports_forced_48khz_audio_rate_only_when_enabled() {
+        let xml = |enabled: bool| format!(
+            "<Shutter><Settings><Component><Name>comboFonctions</Name><Value>H.264</Value></Component><Component><Type>JCheckBox</Type><Name>caseSampleRate</Name><Value>{enabled}</Value></Component></Settings></Shutter>");
+        let active = import_xml(&xml(true), &Settings::default()).unwrap();
+        assert_eq!(active.settings.audio_sample_rate, 48_000);
+        assert!(!active.skipped.iter().any(|s| s.contains("caseSampleRate")));
+        let inactive = import_xml(&xml(false), &Settings::default()).unwrap();
+        assert_eq!(inactive.settings.audio_sample_rate, 0);
     }
     #[test]
     fn refuses_unknown_function_and_entity_declaration() {
