@@ -216,6 +216,8 @@ pub struct Settings {
     pub audio_equalizer_db: f32, // peaking equalizer gain, 0 disables
     #[serde(default = "default_audio_equalizer_hz")]
     pub audio_equalizer_hz: u32, // center frequency
+    #[serde(default)]
+    pub audio_eq_bands_db: [f32; 5], // 100, 300, 1000, 3000, 10000 Hz
     pub output_dir: String,
     pub ffmpeg_path: String,
     pub ffprobe_path: String,
@@ -242,7 +244,7 @@ impl Default for Settings {
             audio_stream: -1, subtitle_stream: -1, video_stream: 0,
             deinterlace: false, denoise: false, sharpen: false,
             brightness: 0.0, contrast: 1.0, saturation: 1.0, gamma: 1.0,
-            audio_channels: 0, audio_sample_rate: 0, audio_gain_db: 0.0, audio_offset_seconds: 0.0, audio_highpass_hz: 0, audio_lowpass_hz: 0, audio_equalizer_db: 0.0, audio_equalizer_hz: 1000,
+            audio_channels: 0, audio_sample_rate: 0, audio_gain_db: 0.0, audio_offset_seconds: 0.0, audio_highpass_hz: 0, audio_lowpass_hz: 0, audio_equalizer_db: 0.0, audio_equalizer_hz: 1000, audio_eq_bands_db: [0.0; 5],
             output_dir: String::new(),
             ffmpeg_path: String::new(), ffprobe_path: String::new(),
             ffplay_path: String::new(), dark_theme: true,
@@ -304,6 +306,7 @@ pub struct EncodeOptions {
     pub audio_lowpass_hz: u32, // 0 disables
     pub audio_equalizer_db: f32, // peaking equalizer gain, 0 disables
     pub audio_equalizer_hz: u32, // center frequency
+    pub audio_eq_bands_db: [f32; 5], // 100, 300, 1000, 3000, 10000 Hz
     pub output_dir: Option<PathBuf>,
     pub ffmpeg: PathBuf,
 }
@@ -347,6 +350,7 @@ impl Settings {
             audio_lowpass_hz: self.audio_lowpass_hz,
             audio_equalizer_db: self.audio_equalizer_db,
             audio_equalizer_hz: self.audio_equalizer_hz,
+            audio_eq_bands_db: self.audio_eq_bands_db,
             output_dir: (!self.output_dir.is_empty()).then(|| PathBuf::from(&self.output_dir)),
             ffmpeg: resolve_tool("ffmpeg", &self.ffmpeg_path),
         }
