@@ -116,6 +116,9 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
     if !(-31..=-5).contains(&options.normalization_target_lufs) {
         return Err("Normalization target must be between -31 and -5 LUFS".into());
     }
+    if options.audio_eq_bands_db.iter().any(|gain| !gain.is_finite() || !(-24.0..=24.0).contains(gain)) {
+        return Err("Graphic EQ bands must be between -24 and +24 dB".into());
+    }
     if !options.audio_equalizer_db.is_finite()
         || !(-24.0..=24.0).contains(&options.audio_equalizer_db) {
         return Err("Equalizer gain must be between -24 and +24 dB".into());
@@ -172,7 +175,8 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
         || options.audio_fade_in_seconds > 0.0 || options.audio_fade_out_seconds > 0.0
         || options.audio_offset_seconds != 0.0
         || options.audio_highpass_hz != 0 || options.audio_lowpass_hz != 0
-        || options.audio_equalizer_db != 0.0;
+        || options.audio_equalizer_db != 0.0
+        || options.audio_eq_bands_db.iter().any(|gain| *gain != 0.0);
     if audio_processing && !(options.preset.video() || options.preset.audio_only()) {
         return Err("Audio processing requires an encoding preset, not stream copy or analysis".into());
     }
@@ -232,6 +236,12 @@ fn audio_filters(o: &EncodeOptions) -> Vec<String> {
     }
     if o.audio_highpass_hz > 0 { filters.push(format!("highpass=f={}", o.audio_highpass_hz)); }
     if o.audio_lowpass_hz > 0 { filters.push(format!("lowpass=f={}", o.audio_lowpass_hz)); }
+    for (freq, gain) in [100, 300, 1000, 3000, 10000].into_iter()
+        .zip(o.audio_eq_bands_db) {
+        if gain != 0.0 {
+            filters.push(format!("equalizer=f={freq}:t=q:w=1:g={gain:.2}"));
+        }
+    }
     if o.audio_equalizer_db != 0.0 {
         filters.push(format!("equalizer=f={}:t=q:w=1:g={:.2}",
             o.audio_equalizer_hz, o.audio_equalizer_db));
@@ -964,7 +974,7 @@ mod tests {
             audio_stream: -1, subtitle_stream: -1, video_stream: 0,
             deinterlace: false, denoise: false, sharpen: false,
             brightness: 0.0, contrast: 1.0, saturation: 1.0, gamma: 1.0,
-            audio_channels: 0, audio_sample_rate: 0, audio_gain_db: 0.0, audio_offset_seconds: 0.0, audio_highpass_hz: 0, audio_lowpass_hz: 0, audio_equalizer_db: 0.0, audio_equalizer_hz: 1000,
+            audio_channels: 0, audio_sample_rate: 0, audio_gain_db: 0.0, audio_offset_seconds: 0.0, audio_highpass_hz: 0, audio_lowpass_hz: 0, audio_equalizer_db: 0.0, audio_equalizer_hz: 1000, audio_eq_bands_db: [0.0; 5],
             output_dir: None, ffmpeg: PathBuf::from("ffmpeg") }
     }
     #[test]
