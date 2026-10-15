@@ -324,6 +324,37 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
             skipped.push("Video limiter requires a video encoding function".into());
         }
     }
+    // Shutter stores these four effects as an enabled JCheckBox and a JSlider.
+    // Match its FFmpeg expressions, not unrelated Rust controls such as the
+    // generic HQDN3D denoiser or unsharp checkbox.
+    for (checkbox, slider, low, high, kind) in [
+        ("caseDetails", "sliderDetails", -10, 10, 0u8),
+        ("caseAddGrain", "sliderAddGrain", 0, 100, 1),
+        ("caseDenoise", "sliderDenoise", 0, 10, 2),
+        ("caseSmoothExposure", "sliderSmoothExposure", 0, 100, 3),
+    ] {
+        if get(checkbox) != Some("true") { continue; }
+        if !preset.video() {
+            skipped.push(format!("{checkbox} requires video re-encoding"));
+            continue;
+        }
+        match get(slider).and_then(|v| v.parse::<i32>().ok()) {
+            Some(value) if (low..=high).contains(&value) => {
+                if value == 0 {
+                    applied.push(format!("{checkbox}: zero strength (no effect)"));
+                    continue;
+                }
+                match kind {
+                    0 => settings.video_detail_amount = value as i8,
+                    1 => settings.video_grain_amount = value as u8,
+                    2 => settings.video_nlmeans_strength = value as u8,
+                    _ => settings.video_deflicker_amount = value as u8,
+                }
+                applied.push(format!("{checkbox}: {value}"));
+            }
+            _ => skipped.push(format!("{checkbox}: missing or out-of-range {slider}")),
+        }
+    }
     if get("caseForcerDesentrelacement") == Some("true") && preset.video() {
         settings.deinterlace = true;
         applied.push("Deinterlacing".into());
@@ -337,7 +368,7 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         "caseForceQuality", "caseForceSpeed", "caseForcerEntrelacement",
         "caseForcerInversion", "caseForcerDAR", "caseSequenceFPS",
         "caseGamma", "caseColormatrix", "caseColorspace",
-        "caseLUTs", "caseDenoise", "caseEnableCrop",
+        "caseLUTs", "caseEnableCrop",
     ];
     for name in UNSUPPORTED_ACTIVE_OPTIONS {
         if get(name) == Some("true") {
@@ -351,7 +382,8 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         "caseQMax", "caseForcerDesentrelacement", "caseConform", "caseSampleRate",
         "caseRotate", "caseMiror", "caseChangeAudioCodec", "caseAudioOffset",
         "caseVideoFadeIn", "caseAudioFadeIn", "caseVideoFadeOut", "caseAudioFadeOut",
-        "caseLimiter",
+        "caseLimiter", "caseDetails", "caseAddGrain",
+        "caseDenoise", "caseSmoothExposure",
     ];
     for component in settings_node.descendants().filter(|n| n.has_tag_name("Component")) {
         let child = |tag| component.children().find(|c| c.has_tag_name(tag))
@@ -598,6 +630,38 @@ mod tests {
         let imported = import_xml(xml, &Settings::default()).unwrap();
         assert!(imported.settings.broadcast_video_limiter);
         assert!(imported.applied.iter().any(|s| s.contains("limiter")));
+    }
+    #[test]
+    fn imports_four_shutter_video_effect_sliders_without_guessing() {
+        let xml = r#"<Shutter><Settings>
+            <Component><Name>comboFonctions</Name><Value>H.265</Value></Component>
+            <Component><Type>JCheckBox</Type><Name>caseDetails</Name><Value>true</Value></Component>
+            <Component><Name>sliderDetails</Name><Value>-6</Value></Component>
+            <Component><Type>JCheckBox</Type><Name>caseAddGrain</Name><Value>true</Value></Component>
+            <Component><Name>sliderAddGrain</Name><Value>50</Value></Component>
+            <Component><Type>JCheckBox</Type><Name>caseDenoise</Name><Value>true</Value></Component>
+            <Component><Name>sliderDenoise</Name><Value>8</Value></Component>
+            <Component><Type>JCheckBox</Type><Name>caseSmoothExposure</Name><Value>true</Value></Component>
+            <Component><Name>sliderSmoothExposure</Name><Value>40</Value></Component>
+        </Settings></Shutter>"#;
+        let imported = import_xml(xml, &Settings::default()).unwrap();
+        assert_eq!(imported.settings.video_detail_amount, -6);
+        assert_eq!(imported.settings.video_grain_amount, 50);
+        assert_eq!(imported.settings.video_nlmeans_strength, 8);
+        assert_eq!(imported.settings.video_deflicker_amount, 40);
+        assert!(!imported.skipped.iter().any(|v| v.contains("caseDenoise")));
+    }
+
+    #[test]
+    fn rejects_invalid_shutter_filter_sliders_without_applying() {
+        let xml = r#"<Shutter><Settings>
+            <Component><Name>comboFonctions</Name><Value>H.264</Value></Component>
+            <Component><Name>caseDetails</Name><Value>true</Value></Component>
+            <Component><Name>sliderDetails</Name><Value>100</Value></Component>
+        </Settings></Shutter>"#;
+        let result = import_xml(xml, &Settings::default()).unwrap();
+        assert_eq!(result.settings.video_detail_amount, 0);
+        assert!(result.skipped.iter().any(|s| s.contains("sliderDetails")));
     }
     #[test]
     fn refuses_unknown_function_and_entity_declaration() {
