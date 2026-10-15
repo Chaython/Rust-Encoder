@@ -221,6 +221,25 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
             skipped.push("Conform FPS enabled without a stored frame rate".into());
         }
     }
+    // Legacy audio offsets are signed frame counts, not milliseconds.
+    // Only translate when the preset supplies an explicit frame timebase.
+    if get("caseAudioOffset") == Some("true") {
+        let fps = if settings.frame_rate_numerator > 0 && settings.frame_rate_denominator > 0 {
+            settings.frame_rate_numerator as f64 / settings.frame_rate_denominator as f64
+        } else { settings.frame_rate as f64 };
+        let frames = get("txtAudioOffset").and_then(|s| s.trim().parse::<i32>().ok());
+        if let Some(frames) = frames {
+            let seconds = frames as f64 / fps;
+            if fps > 0.0 && seconds.is_finite() && seconds.abs() <= 600.0 {
+                settings.audio_offset_seconds = seconds as f32;
+                applied.push(format!("Audio offset: {frames} frames"));
+            } else {
+                skipped.push("Audio offset requires a compatible conform frame rate".into());
+            }
+        } else {
+            skipped.push("Audio offset is missing a valid frame count".into());
+        }
+    }
     // Shutter's "caseSampleRate" specifically forces 48 kHz (lbl48k),
     // unlike the per-track routing selectors.
     if get("caseSampleRate") == Some("true") && (preset.video() || preset.audio_only()) {
@@ -303,7 +322,7 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
     // have no equivalent yet. Saved Swing snapshots include disabled controls
     // and selected UI defaults; only active values should trigger warnings.
     const UNSUPPORTED_ACTIVE_OPTIONS: &[&str] = &[
-        "caseAudioOffset", "caseMixAudio", "caseSplitAudio", "caseConvertAudioFramerate", "caseForceTune",
+        "caseMixAudio", "caseSplitAudio", "caseConvertAudioFramerate", "caseForceTune",
         "caseForceLevel", "caseForceOutput", "caseForcePreset",
         "caseForceQuality", "caseForceSpeed", "caseForcerEntrelacement",
         "caseForcerInversion", "caseForcerDAR", "caseSequenceFPS",
@@ -320,7 +339,7 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
     const MAPPED_CHECKBOXES: &[&str] = &[
         "caseNormalizeAudio", "caseFastStart", "caseGOP", "case2pass",
         "caseQMax", "caseForcerDesentrelacement", "caseConform", "caseSampleRate",
-        "caseRotate", "caseMiror", "caseChangeAudioCodec",
+        "caseRotate", "caseMiror", "caseChangeAudioCodec", "caseAudioOffset",
         "caseVideoFadeIn", "caseAudioFadeIn", "caseVideoFadeOut", "caseAudioFadeOut",
     ];
     for component in settings_node.descendants().filter(|n| n.has_tag_name("Component")) {
@@ -542,6 +561,22 @@ mod tests {
         let different = import_xml(&xml("-23 LUFS"), &Settings::default()).unwrap();
         assert!(different.settings.normalize_audio);
         assert_eq!(different.settings.normalization_target_lufs, -23);
+    }
+    #[test]
+    fn audio_offset_converts_signed_frames_only_with_frame_rate() {
+        let xml = |conform: bool| format!(
+            "<Shutter><Settings>
+            <Component><Name>comboFonctions</Name><Value>H.264</Value></Component>
+            <Component><Name>caseConform</Name><Value>{conform}</Value></Component>
+            <Component><Name>comboFPS</Name><Value>25</Value></Component>
+            <Component><Name>caseAudioOffset</Name><Value>true</Value></Component>
+            <Component><Name>txtAudioOffset</Name><Value>-50</Value></Component>
+            </Settings></Shutter>");
+        let mapped = import_xml(&xml(true), &Settings::default()).unwrap();
+        assert_eq!(mapped.settings.audio_offset_seconds, -2.0);
+        let unknown = import_xml(&xml(false), &Settings::default()).unwrap();
+        assert_eq!(unknown.settings.audio_offset_seconds, 0.0);
+        assert!(unknown.skipped.iter().any(|s| s.contains("Audio offset")));
     }
     #[test]
     fn refuses_unknown_function_and_entity_declaration() {
