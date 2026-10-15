@@ -63,6 +63,10 @@ Video functions now support **constant-quality (CRF) or target-bitrate** encodin
 
 For identical output quality, speed settings change encoding time and compression efficiency rather than promising a universal speedup; the hardware backend and video filters remain performance bottlenecks. Estimates based on input duration and video/audio bitrates are approximate, not guarantees. Existing JSON profiles load with backward-compatible defaults.
 
+## Audio synchronization offset
+
+Encoding presets now support a signed **audio offset in seconds**. Positive values delay audio using FFmpeg `adelay`; negative values advance audio by trimming its beginning and resetting timestamps. This requires an enabled, re-encoded audio stream. Shutter Encoder `.enc` audio-offset frame counts import only when an explicit conform FPS is available; without a known source timebase the importer warns instead of guessing. This is a timing adjustment, not full per-track audio routing.
+
 ## Audio and video fade-in effects
 
 Audio and video encoding functions support independent **fade-in and fade-out durations (seconds)**, implemented with FFmpeg `afade` and `fade` filters. Duration `0` disables each effect. Fade processing is relative to the trimmed output, and an audio fade requires an enabled audio stream. **Fade-out currently requires an explicit trim end**: the encoder computes the final fade timestamp from that bounded duration and refuses unbounded fade-outs rather than buffering entire streams with reverse filters.
