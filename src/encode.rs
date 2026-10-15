@@ -128,6 +128,16 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
             return Err(format!("{label} fade-in duration must be 0–600 seconds"));
         }
     }
+    if options.audio_fade_out_seconds > 0.0 || options.video_fade_out_seconds > 0.0 {
+        if options.end_seconds <= options.start_seconds {
+            return Err("Fade-out requires a specified trim end to determine its start time".into());
+        }
+        let duration = options.end_seconds - options.start_seconds;
+        if options.audio_fade_out_seconds as f64 > duration
+            || options.video_fade_out_seconds as f64 > duration {
+            return Err("Fade-out duration exceeds the selected trim range".into());
+        }
+    }
     if (options.video_fade_in_seconds > 0.0 || options.video_fade_out_seconds > 0.0)
         && !options.preset.video() {
         return Err("Video fade-in requires a video encoding preset".into());
@@ -186,7 +196,8 @@ fn audio_filters(o: &EncodeOptions) -> Vec<String> {
         filters.push(format!("afade=t=in:st=0:d={:.3}", o.audio_fade_in_seconds));
     }
     if o.audio_fade_out_seconds > 0.0 {
-        filters.push(format!("areverse,afade=t=in:st=0:d={:.3},areverse", o.audio_fade_out_seconds));
+        filters.push(format!("afade=t=out:st={:.3}:d={:.3}",
+            (o.end_seconds - o.start_seconds - o.audio_fade_out_seconds as f64).max(0.0), o.audio_fade_out_seconds));
     }
     filters
 }
@@ -438,7 +449,8 @@ pub fn build_args(input: &Path, temp_output: &Path, o: &EncodeOptions) -> Result
                 video_filters.push(format!("fade=t=in:st=0:d={:.3}", o.video_fade_in_seconds));
             }
             if o.video_fade_out_seconds > 0.0 {
-                video_filters.push(format!("reverse,fade=t=in:st=0:d={:.3},reverse", o.video_fade_out_seconds));
+                video_filters.push(format!("fade=t=out:st={:.3}:d={:.3}",
+                    (o.end_seconds - o.start_seconds - o.video_fade_out_seconds as f64).max(0.0), o.video_fade_out_seconds));
             }
             if o.deinterlace { video_filters.push("yadif=mode=send_frame:parity=auto:deint=all".into()); }
             if o.denoise { video_filters.push("hqdn3d=1.5:1.5:6:6".into()); }
