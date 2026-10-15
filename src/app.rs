@@ -1711,6 +1711,13 @@ fn quality_setting_label(encoder: HardwareEncoder) -> &'static str {
 }
 
 fn sanitize_codec_settings(settings: &mut Settings) {
+    if !settings.preset.video() {
+        settings.video_fade_in_seconds = 0.0;
+    }
+    if !(settings.preset.video() || settings.preset.audio_only())
+        || settings.audio_stream == -2 {
+        settings.audio_fade_in_seconds = 0.0;
+    }
     if !settings.use_video_bitrate {
         settings.max_video_bitrate_kbps = 0;
     }
