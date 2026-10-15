@@ -1344,6 +1344,9 @@ impl EncoderApp {
                     ui.label("Encoding threads (0 = automatic)");
                     changed |= ui.add(egui::DragValue::new(&mut self.settings.encoder_threads)
                         .range(0..=32)).changed();
+                    ui.label("Video fade-in (seconds, 0 = off)");
+                    changed |= ui.add(egui::DragValue::new(&mut self.settings.video_fade_in_seconds)
+                        .range(0.0..=600.0).speed(0.1)).changed();
                     ui.label("Keyframe interval / GOP (0 = codec default)");
                     changed |= ui.add(egui::DragValue::new(&mut self.settings.keyframe_interval)
                         .range(0..=1000)).changed();
@@ -1366,6 +1369,10 @@ impl EncoderApp {
                 if self.settings.preset.video() || self.settings.preset.audio_only() {
                     changed |= ui.add_enabled(self.settings.audio_stream != -2,
                         egui::Checkbox::new(&mut self.settings.normalize_audio, "Normalize loudness (one-pass)")).changed();
+                    ui.label("Audio fade-in (seconds, 0 = off)");
+                    changed |= ui.add_enabled(self.settings.audio_stream != -2,
+                        egui::DragValue::new(&mut self.settings.audio_fade_in_seconds)
+                            .range(0.0..=600.0).speed(0.1)).changed();
                     if self.settings.preset.video() || self.settings.preset.audio_only() {
                         ui.separator();
                         ui.label("Output channels");
