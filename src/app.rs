@@ -1347,6 +1347,9 @@ impl EncoderApp {
                     ui.label("Video fade-in (seconds, 0 = off)");
                     changed |= ui.add(egui::DragValue::new(&mut self.settings.video_fade_in_seconds)
                         .range(0.0..=600.0).speed(0.1)).changed();
+                    ui.label("Video fade-out (seconds, needs trim end)");
+                    changed |= ui.add(egui::DragValue::new(&mut self.settings.video_fade_out_seconds)
+                        .range(0.0..=600.0).speed(0.1)).changed();
                     ui.label("Keyframe interval / GOP (0 = codec default)");
                     changed |= ui.add(egui::DragValue::new(&mut self.settings.keyframe_interval)
                         .range(0..=1000)).changed();
@@ -1372,6 +1375,10 @@ impl EncoderApp {
                     ui.label("Audio fade-in (seconds, 0 = off)");
                     changed |= ui.add_enabled(self.settings.audio_stream != -2,
                         egui::DragValue::new(&mut self.settings.audio_fade_in_seconds)
+                            .range(0.0..=600.0).speed(0.1)).changed();
+                    ui.label("Audio fade-out (seconds, needs trim end)");
+                    changed |= ui.add_enabled(self.settings.audio_stream != -2,
+                        egui::DragValue::new(&mut self.settings.audio_fade_out_seconds)
                             .range(0.0..=600.0).speed(0.1)).changed();
                     if self.settings.preset.video() || self.settings.preset.audio_only() {
                         ui.separator();
@@ -1713,10 +1720,12 @@ fn quality_setting_label(encoder: HardwareEncoder) -> &'static str {
 fn sanitize_codec_settings(settings: &mut Settings) {
     if !settings.preset.video() {
         settings.video_fade_in_seconds = 0.0;
+        settings.video_fade_out_seconds = 0.0;
     }
     if !(settings.preset.video() || settings.preset.audio_only())
         || settings.audio_stream == -2 {
         settings.audio_fade_in_seconds = 0.0;
+        settings.audio_fade_out_seconds = 0.0;
     }
     if !settings.use_video_bitrate {
         settings.max_video_bitrate_kbps = 0;
