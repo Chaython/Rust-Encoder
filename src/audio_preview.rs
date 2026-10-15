@@ -37,6 +37,19 @@ fn read_pcm_block<R: Read>(reader: &mut R, dst: &mut [u8]) -> Result<usize, Stri
 
 pub fn audio_args(input: &Path, seek: f64, end: Option<f64>, stream_index: usize)
     -> Result<Vec<OsString>, String> {
+    audio_args_with_mix(input, seek, end, stream_index, None)
+}
+
+/// Decode either a specific audio stream or a deliberate mix of two streams
+/// into stereo PCM for native preview playback.
+pub fn audio_args_with_mix(input: &Path, seek: f64, end: Option<f64>,
+                           stream_index: usize, secondary: Option<usize>)
+    -> Result<Vec<OsString>, String> {
+    if let Some(other) = secondary {
+        if other > 31 || other == stream_index {
+            return Err("Secondary audio track must be 0–31 and different from primary".into());
+        }
+    }
     if !input.is_file() { return Err(format!("Audio source does not exist: {}", input.display())); }
     if !seek.is_finite() || seek < 0.0 { return Err("Audio start must be finite and nonnegative".into()); }
     if let Some(end) = end
@@ -54,8 +67,16 @@ pub fn audio_args(input: &Path, seek: f64, end: Option<f64>, stream_index: usize
         args.push(OsString::from("-t"));
         args.push(format!("{:.3}", end - seek).into());
     }
+    if let Some(other) = secondary {
+        args.push(OsString::from("-filter_complex"));
+        args.push(format!(
+            "[0:a:{stream_index}][0:a:{other}]amix=inputs=2:duration=longest:dropout_transition=0:normalize=1[mixed_audio]"
+        ).into());
+        args.extend([OsString::from("-map"), OsString::from("[mixed_audio]")]);
+    } else {
+        args.extend([OsString::from("-map"), OsString::from(format!("0:a:{stream_index}"))]);
+    }
     args.extend([
-        OsString::from("-map"), OsString::from(format!("0:a:{stream_index}")),
         OsString::from("-vn"), OsString::from("-sn"), OsString::from("-dn"),
         OsString::from("-ac"), OsString::from(CHANNELS.to_string()),
         OsString::from("-ar"), OsString::from(RATE.to_string()),
@@ -119,8 +140,9 @@ pub struct NativeAudioPreview {
 
 impl NativeAudioPreview {
     pub fn launch(job_id: u64, ffmpeg: &Path, input: &Path, seek: f64,
-                  end: Option<f64>, audio_stream: usize) -> Result<Self, String> {
-        let args = audio_args(input, seek, end, audio_stream)?;
+                  end: Option<f64>, audio_stream: usize,
+                  secondary: Option<usize>) -> Result<Self, String> {
+        let args = audio_args_with_mix(input, seek, end, audio_stream, secondary)?;
         let output = OutputStreamBuilder::open_default_stream()
             .map_err(|e| format!("Cannot open system audio output: {e}"))?;
         let sink = Arc::new(Sink::connect_new(output.mixer()));
@@ -242,6 +264,18 @@ mod tests {
         assert!(args.windows(2).any(|a| a[0] == "-t" && a[1] == "2.000"));
         assert_eq!(args.last().unwrap(), "pipe:1");
         assert!(args.iter().any(|a| a == path.as_os_str()));
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn mixed_audio_preview_uses_two_streams_and_checks_duplicates() {
+        let path = std::env::temp_dir().join(format!("audio-mix-preview-{}.mkv", std::process::id()));
+        std::fs::write(&path, b"fixture").unwrap();
+        let args = audio_args_with_mix(&path, 0.0, None, 0, Some(1)).unwrap();
+        assert!(args.windows(2).any(|p| p[0] == "-filter_complex"
+            && p[1].to_string_lossy().contains("[0:a:0][0:a:1]amix=inputs=2")));
+        assert!(args.windows(2).any(|p| p[0] == "-map" && p[1] == "[mixed_audio]"));
+        assert!(audio_args_with_mix(&path, 0.0, None, 1, Some(1)).is_err());
+        assert!(audio_args_with_mix(&path, 0.0, None, 0, Some(32)).is_err());
         std::fs::remove_file(path).unwrap();
     }
     #[test]

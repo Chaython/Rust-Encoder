@@ -363,6 +363,14 @@ fn two_selected_audio_streams_mix_into_one_encodable_track() {
         assert_eq!(String::from_utf8_lossy(&streams.stdout).lines().count(), 1,
             "expected one mixed audio stream in {}", name);
     }
+    // Native preview must use the same mixing topology instead of
+    // misleadingly playing only the primary source stream.
+    let args = audio_preview::audio_args_with_mix(&input, 0.0, None, 0, Some(1)).unwrap();
+    let pcm = Command::new("ffmpeg").args(args).output().unwrap();
+    assert!(pcm.status.success(), "Mixed audio preview failed: {}",
+        String::from_utf8_lossy(&pcm.stderr));
+    assert!(pcm.stdout.len() > 4000, "Missing mixed PCM preview samples");
+
     // Two-pass must analyze video without orphaning the audio mix graph,
     // then include the mixed stream only on its final encoding pass.
     let mut two_pass = options(Preset::H264);

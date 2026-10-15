@@ -80,7 +80,7 @@ The broadcast video limiter converts its filter input into a known 8-bit or 10-b
 
 ## Mix two audio tracks
 
-When video or audio is being re-encoded, select a **specific primary audio track** and optionally mix a **different secondary track**. FFmpeg `amix` combines them into a single encoded audio stream with normalized levels; existing gain, equalizer, normalization, timing, and fade filters apply **after** mixing. This does not copy the original separate audio tracks. Mixing is disabled for stream-copy and analysis; two-pass encoding mixes audio only in the final pass, and the Shutter `caseMixAudio` checkbox is not automatically imported because its settings may describe a different routing arrangement.
+When video or audio is being re-encoded, select a **specific primary audio track** and optionally mix a **different secondary track**. FFmpeg `amix` combines them into a single encoded audio stream with normalized levels; existing gain, equalizer, normalization, timing, and fade filters apply **after** mixing. This does not copy the original separate audio tracks. Embedded audio preview plays the same normalized two-track mix (though it does not apply all export-only audio effects). Mixing is disabled for stream-copy and analysis; two-pass encoding mixes audio only in the final pass, and the Shutter `caseMixAudio` checkbox is not automatically imported because its settings may describe a different routing arrangement.
 
 ## Audio synchronization offset
 

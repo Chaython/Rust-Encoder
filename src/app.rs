@@ -774,8 +774,13 @@ impl EncoderApp {
         }
         if audio_tracks > 0 && self.settings.audio_stream != -2 {
             let index = self.settings.audio_stream.max(0) as usize;
-            if index < audio_tracks {
-                match NativeAudioPreview::launch(job_id, &ffmpeg, &input, position, stop, index) {
+            let secondary = (self.settings.audio_mix_secondary_stream >= 0)
+                .then_some(self.settings.audio_mix_secondary_stream as usize);
+            if index < audio_tracks
+                && secondary.is_none_or(|other| other < audio_tracks && other != index) {
+                match NativeAudioPreview::launch(
+                    job_id, &ffmpeg, &input, position, stop, index, secondary
+                ) {
                     Ok(audio) => {
                         audio.set_volume(self.native_volume);
                         self.native_audio = Some(audio);
@@ -784,7 +789,7 @@ impl EncoderApp {
                 }
             } else {
                 self.native_audio_error = Some(format!(
-                    "Audio track {index} does not exist in the selected media."
+                    "Selected audio tracks do not exist or overlap: primary #{index}, secondary {secondary:?}."
                 ));
             }
         }
