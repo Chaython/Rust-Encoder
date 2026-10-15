@@ -715,7 +715,10 @@ impl EncoderApp {
                                 let filename = job.input.file_name()
                                     .map(|x| x.to_string_lossy()).unwrap_or_default();
                                 let selected = self.selected_job == Some(job.id);
-                                let name = format!("{} · {}", filename, job.status.label());
+                                let clip = job.trim_override
+                                    .map(|(start, end)| format!(" · cut {:.2}–{:.2}s", start, end))
+                                    .unwrap_or_default();
+                                let name = format!("{}{} · {}", filename, clip, job.status.label());
                                 if ui.selectable_label(selected, name)
                                     .on_hover_text(job.input.display().to_string()).clicked() {
                                     self.selected_job = Some(job.id);
@@ -772,6 +775,9 @@ impl EncoderApp {
                             }
                         });
                         ui.small(format!("{} · {}", job.options.preset.label(), job.input.display()));
+                        if let Some((start, end)) = job.trim_override {
+                            ui.small(format!("Cut clip: {:.3}–{:.3}s (locked per job)", start, end));
+                        }
                         if let Some(media) = &job.media { ui.small(media.summary()); }
                         if matches!(job.status, JobState::Running | JobState::Cancelling | JobState::Completed) {
                             let fraction = if matches!(job.status, JobState::Completed) { 1.0 }
@@ -815,8 +821,10 @@ impl EncoderApp {
     fn ensure_preview(&mut self) {
         if self.preview_owner != self.selected_job {
             self.preview_owner = self.selected_job;
-            self.preview_seconds = 0.0;
-            self.preview_requested_seconds = 0.0;
+            let start = self.jobs.iter().find(|j| Some(j.id) == self.selected_job)
+                .and_then(|j| j.trim_override).map(|(start, _)| start).unwrap_or(0.0);
+            self.preview_seconds = start;
+            self.preview_requested_seconds = start;
             self.preview_for = None;
             self.preview_loading = false;
             self.preview_playing = false;
@@ -1109,6 +1117,11 @@ impl EncoderApp {
             .and_then(|j| j.media.as_ref()).cloned();
         if let Some(info) = selected {
             ui.small(info.summary());
+            let clip_bounds = self.jobs.iter().find(|j| Some(j.id) == self.selected_job)
+                .and_then(|j| j.trim_override);
+            if clip_bounds.is_some() {
+                ui.small("Previewing a queued cut; this clip has independent, locked trim bounds.");
+            }
             // FFmpeg-backed embedded playback is the default. The separate
             // FFplay utility is optional and is not part of every FFmpeg package.
             let live = self.native_video.as_ref().is_some_and(|p| Some(p.job_id) == self.selected_job)
@@ -1124,8 +1137,8 @@ impl EncoderApp {
                     .find(|j| Some(j.id) == self.selected_job)
                 {
                     let (position, until) = info.duration_sec.map(|duration| {
-                        let (start, end) = preview_bounds(
-                            duration, self.settings.start_seconds, self.settings.end_seconds);
+                        let (start, end) = clip_bounds.unwrap_or_else(||
+                            preview_bounds(duration, self.settings.start_seconds, self.settings.end_seconds));
                         let position = if self.preview_seconds >= start && self.preview_seconds < end {
                             self.preview_seconds
                         } else { start };
@@ -1160,8 +1173,8 @@ impl EncoderApp {
                 if ui.button(if running { "▶ Restart FFplay" } else { "▶ Open in FFplay" }).clicked()
                     && let Some(job) = self.jobs.iter().find(|j| Some(j.id) == self.selected_job)
                 {
-                    let bounds = info.duration_sec.map(|duration|
-                        preview_bounds(duration, self.settings.start_seconds, self.settings.end_seconds));
+                    let bounds = info.duration_sec.map(|duration| clip_bounds.unwrap_or_else(||
+                        preview_bounds(duration, self.settings.start_seconds, self.settings.end_seconds)));
                     let position = bounds.map(|(start, finish)| {
                         if self.preview_seconds < start || self.preview_seconds >= finish {
                             start
@@ -1185,7 +1198,8 @@ impl EncoderApp {
                 ui.small("Generating audio waveform…");
             }
             if let Some(duration) = info.duration_sec {
-                let (start, end) = preview_bounds(duration, self.settings.start_seconds, self.settings.end_seconds);
+                let (start, end) = clip_bounds.unwrap_or_else(||
+                    preview_bounds(duration, self.settings.start_seconds, self.settings.end_seconds));
                 let width = ui.available_width().max(100.0);
                 let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 24.0),
                     egui::Sense::click_and_drag());
@@ -1948,6 +1962,10 @@ impl EncoderApp {
         egui::CollapsingHeader::new("Cut / trim")
             .default_open(true)
             .show(ui, |ui| {
+                if let Some((start, end)) = self.jobs.iter()
+                    .find(|j| Some(j.id) == self.selected_job).and_then(|j| j.trim_override) {
+                    ui.small(format!("Selected queued cut has fixed trim: {:.3}–{:.3}s. These global fields affect future clips.", start, end));
+                }
                 ui.horizontal_wrapped(|ui| {
                     ui.label("Start (seconds)");
                     changed |= ui.add(egui::DragValue::new(&mut self.settings.start_seconds)
