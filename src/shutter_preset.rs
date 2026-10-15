@@ -170,6 +170,14 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         settings.audio_sample_rate = 48_000;
         applied.push("Force audio sample rate to 48 kHz".into());
     }
+    // Explicitly map supported stream-copy functions.
+    // "Rewrap" is container-dependent and cannot be inferred without a
+    // saved output container; avoid guessing.
+    if get("caseForcerProgressif") == Some("true") {
+        skipped.push("Force progressive scan: no equivalent output-field-order control".into());
+    }
+    // Audio mapping is per-channel in Shutter. Arbitrary mixes are not
+    // equivalent to selecting a single FFmpeg audio stream.
     // Shutter Encoder's QMax checkbox controls quantizer constraints;
     // it is NOT an encoding-speed preset. Never substitute a speed setting.
     if get("caseQMax") == Some("true") && preset.video() {
@@ -189,6 +197,7 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         "caseForceLevel", "caseForceOutput", "caseForcePreset",
         "caseForceQuality", "caseForceSpeed", "caseForcerEntrelacement",
         "caseForcerInversion", "caseForcerDAR", "caseSequenceFPS",
+        "caseMixAudio",
     ];
     for name in UNSUPPORTED_ACTIVE_OPTIONS {
         if get(name) == Some("true") {
