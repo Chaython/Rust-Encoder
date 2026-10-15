@@ -53,6 +53,8 @@ struct Job {
     output: Option<PathBuf>,
     media: Option<MediaInfo>,
     options: EncodeOptions,
+    // Cut exports retain their own time bounds even when shared settings change.
+    trim_override: Option<(f64, f64)>,
     status: JobState,
     elapsed_sec: f64,
     speed: String,
@@ -152,6 +154,7 @@ pub struct EncoderApp {
     preview_for: Option<(u64, u64)>,
     preview_loading: bool,
     preview_playing: bool,
+    cut_undo: Option<(u64, f64, f64)>,
     av_player: Option<PlaybackSession>,
     native_video: Option<NativeVideoPreview>,
     native_audio: Option<NativeAudioPreview>,
@@ -214,6 +217,7 @@ impl EncoderApp {
             preview_for: None,
             preview_loading: false,
             preview_playing: false,
+            cut_undo: None,
             av_player: None,
             native_video: None,
             native_audio: None,
@@ -257,6 +261,7 @@ impl EncoderApp {
                 output: None,
                 media: None,
                 options: self.settings.encode_options(),
+                trim_override: None,
                 status: JobState::Analyzing,
                 elapsed_sec: 0.0,
                 speed: String::new(),
@@ -269,11 +274,65 @@ impl EncoderApp {
 
     /// Keep queued jobs in sync with the selected function after importing files.
     /// Pending jobs follow the editor; running and completed jobs remain immutable.
+    /// Queue one output per retained range, without mutating media on disk.
+    /// Frozen time bounds stay attached to each queued clip; shared codec
+    /// changes may still update their other options.
+    fn queue_clip_ranges(&mut self, ranges: &[(f64, f64)]) -> Result<usize, String> {
+        let selected_id = self.selected_job.ok_or("Select a source file before cutting")?;
+        let source = self.jobs.iter().find(|j| j.id == selected_id)
+            .ok_or("Selected source was removed")?;
+        let media = source.media.clone().ok_or("Wait for media inspection before cutting")?;
+        let duration = media.duration_sec.filter(|d| d.is_finite() && *d > 0.0)
+            .ok_or("A finite media duration is required to export cuts")?;
+        let input = source.input.clone();
+        if !self.settings.preset.video() && !self.settings.preset.audio_only()
+            && !matches!(self.settings.preset,
+                Preset::RemuxMkv | Preset::RemuxMp4 | Preset::VideoOnly)
+        {
+            return Err("Cut exports require an encoding or stream-copy function".into());
+        }
+        if ranges.is_empty() { return Err("Mark a clip to export".into()); }
+        for &(start, end) in ranges {
+            if !start.is_finite() || !end.is_finite() || start < 0.0
+                || end > duration || end - start < 0.001 {
+                return Err("Clip bounds must be within the source and at least 1 ms long".into());
+            }
+            let mut proposed = self.settings.encode_options();
+            proposed.start_seconds = start;
+            proposed.end_seconds = end;
+            encode::validate_options(&proposed)?;
+        }
+        for &(start, end) in ranges {
+            let id = self.next_id;
+            self.next_id += 1;
+            let mut options = self.settings.encode_options();
+            options.start_seconds = start;
+            options.end_seconds = end;
+            self.jobs.push(Job {
+                id, input: input.clone(), output: None, media: Some(media.clone()),
+                options, trim_override: Some((start, end)), status: JobState::Queued,
+                elapsed_sec: 0.0, speed: String::new(), pass: 1,
+            });
+        }
+        // Avoid accidentally exporting the full-length source as well. A
+        // currently running source is never altered or forcibly interrupted.
+        if let Some(source) = self.jobs.iter_mut().find(|j| j.id == selected_id)
+            && source.trim_override.is_none() && source.status.is_pending() {
+            source.status = JobState::Cancelled;
+        }
+        self.notice = format!("Queued {} cut clip(s). Each clip exports as a separate file.", ranges.len());
+        Ok(ranges.len())
+    }
+
     fn update_pending_options(&mut self) {
         let options = self.settings.encode_options();
         for job in &mut self.jobs {
             if job.status.is_pending() {
                 job.options = options.clone();
+                if let Some((start, end)) = job.trim_override {
+                    job.options.start_seconds = start;
+                    job.options.end_seconds = end;
+                }
             }
         }
     }
@@ -524,6 +583,10 @@ impl EncoderApp {
             job.elapsed_sec = 0.0;
             job.speed.clear();
             job.options = self.settings.encode_options();
+            if let Some((start, end)) = job.trim_override {
+                job.options.start_seconds = start;
+                job.options.end_seconds = end;
+            }
             job.status = JobState::Analyzing;
             let probe_tool = model::resolve_tool("ffprobe", &self.settings.ffprobe_path);
             media::probe_async(id, probe_tool, job.input.clone(), self.sender.clone());
@@ -757,6 +820,7 @@ impl EncoderApp {
             self.preview_for = None;
             self.preview_loading = false;
             self.preview_playing = false;
+            self.cut_undo = None;
             self.av_player = None;
             self.native_video = None;
             self.native_audio = None;
@@ -2197,6 +2261,7 @@ mod tests {
             elapsed_sec: 0.0,
             speed: String::new(),
             pass: 1,
+            trim_override: None,
         }
     }
 
