@@ -252,13 +252,11 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
     // have no equivalent yet. Saved Swing snapshots include disabled controls
     // and selected UI defaults; only active values should trigger warnings.
     const UNSUPPORTED_ACTIVE_OPTIONS: &[&str] = &[
-        "caseAudioOffset",
-        "caseMixAudio",
-        "caseSplitAudio", "caseConvertAudioFramerate", "caseForceTune",
+        "caseAudioOffset", "caseMixAudio", "caseSplitAudio", "caseConvertAudioFramerate", "caseForceTune",
         "caseForceLevel", "caseForceOutput", "caseForcePreset",
         "caseForceQuality", "caseForceSpeed", "caseForcerEntrelacement",
         "caseForcerInversion", "caseForcerDAR", "caseSequenceFPS",
-        "caseMixAudio", "caseGamma", "caseColormatrix", "caseColorspace",
+        "caseGamma", "caseColormatrix", "caseColorspace",
         "caseLUTs", "caseDenoise", "caseEnableCrop",
     ];
     for name in UNSUPPORTED_ACTIVE_OPTIONS {
@@ -266,27 +264,21 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
             skipped.push(format!("Unsupported enabled Shutter option: {name}"));
         }
     }
-    // Shutter writes a large snapshot of Swing controls to each preset.
-    // Report ALL active, unmapped checkboxes instead of silently losing
-    // edits that are not in a small manually curated warning list.
+    // The generic XML audit must not repeat a warning that a specialist
+    // converter already emitted. Deduplicate diagnostics at the end as well.
     const MAPPED_CHECKBOXES: &[&str] = &[
         "caseNormalizeAudio", "caseFastStart", "caseGOP", "case2pass",
         "caseQMax", "caseForcerDesentrelacement", "caseConform", "caseSampleRate",
         "caseRotate", "caseMiror", "caseChangeAudioCodec",
-        "caseVideoFadeIn", "caseAudioFadeIn",
-        "caseAudioOffset", "caseAudioFadeIn", "caseAudioFadeOut",
-        "caseVideoFadeIn", "caseVideoFadeOut", "caseMixAudio",
-        "caseSplitAudio", "caseConvertAudioFramerate", "caseForceTune",
-        "caseForceLevel", "caseForceOutput", "caseForcePreset",
-        "caseForceQuality", "caseForceSpeed", "caseForcerEntrelacement",
-        "caseForcerInversion", "caseForcerDAR", "caseSequenceFPS",
+        "caseVideoFadeIn", "caseAudioFadeIn", "caseVideoFadeOut", "caseAudioFadeOut",
     ];
     for component in document.descendants().filter(|n| n.has_tag_name("Component")) {
         let child = |tag| component.children().find(|c| c.has_tag_name(tag))
             .and_then(|c| c.text()).map(str::trim);
         if child("Type") == Some("JCheckBox") && child("Value") == Some("true") {
             if let Some(name) = child("Name") {
-                if !MAPPED_CHECKBOXES.contains(&name) {
+                if !MAPPED_CHECKBOXES.contains(&name)
+                    && !UNSUPPORTED_ACTIVE_OPTIONS.contains(&name) {
                     skipped.push(format!("Unmapped enabled setting: {name}"));
                 }
             }
@@ -302,6 +294,8 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
     }
     crate::encode::validate_options(&settings.encode_options())
         .map_err(|e| format!("Imported settings are incompatible: {e}"))?;
+    skipped.sort();
+    skipped.dedup();
     Ok(ImportResult { settings, applied, skipped })
 }
 
