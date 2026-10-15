@@ -451,6 +451,10 @@ mod tests {
         assert_eq!(settings.frame_rate_denominator, 1);
         assert_eq!(settings.audio_equalizer_hz, 1000);
         assert_eq!(settings.audio_eq_bands_db, [0.0; 5]);
+        assert_eq!(settings.video_detail_amount, 0);
+        assert_eq!(settings.video_grain_amount, 0);
+        assert_eq!(settings.video_nlmeans_strength, 0);
+        assert_eq!(settings.video_deflicker_amount, 0);
         assert_eq!(settings.audio_offset_seconds, 0.0);
         assert_eq!(settings.audio_fade_in_seconds, 0.0);
         assert_eq!(settings.audio_fade_out_seconds, 0.0);
