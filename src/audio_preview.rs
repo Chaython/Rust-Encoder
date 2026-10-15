@@ -5,7 +5,7 @@
 use crossbeam_channel::{Receiver, SendTimeoutError, TryRecvError, bounded};
 use rodio::{OutputStream, OutputStreamBuilder, Sink, Source};
 use std::{
-    ffi::OsString, io::{BufReader, Read}, path::{Path, PathBuf},
+    ffi::OsString, io::{BufReader, Read}, path::Path,
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}},
     thread, time::Duration,

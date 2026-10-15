@@ -7,7 +7,7 @@ use crossbeam_channel::{Receiver, TryRecvError, TrySendError, bounded};
 use std::{
     ffi::OsString,
     io::{BufReader, Read},
-    path::{Path, PathBuf},
+    path::Path,
     process::{Child, Command, Stdio},
     sync::{
         Arc, Mutex,

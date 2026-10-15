@@ -260,7 +260,10 @@ fn audio_filters(o: &EncodeOptions) -> Vec<String> {
         filters.push(format!("loudnorm=I={}:TP=-1.5:LRA=11", o.normalization_target_lufs));
     }
     if o.audio_fade_in_seconds > 0.0 {
-        filters.push(format!("afade=t=in:st=0:d={:.3}", o.audio_fade_in_seconds));
+        // Delayed audio begins after the inserted silence. Fade in when
+        // content becomes audible, not during the silent delay.
+        filters.push(format!("afade=t=in:st={:.3}:d={:.3}",
+            o.audio_offset_seconds.max(0.0), o.audio_fade_in_seconds));
     }
     if o.audio_fade_out_seconds > 0.0 {
         filters.push(format!("afade=t=out:st={:.3}:d={:.3}",
@@ -1565,13 +1568,20 @@ mod tests {
         fs::write(&input, b"fixture").unwrap();
         let mut o = options(Preset::H264);
         o.audio_offset_seconds = 0.5;
+        o.audio_fade_in_seconds = 1.0;
         let args = build_args(&input, &dir.join("out.mp4"), &o).unwrap();
-        assert!(args.windows(2).any(|p| p[0] == "-af"
-            && p[1].to_string_lossy().contains("adelay=500:all=1")));
+        assert!(args.windows(2).any(|p| p[0] == "-af" && {
+            let filter = p[1].to_string_lossy();
+            filter.contains("adelay=500:all=1")
+                && filter.contains("afade=t=in:st=0.500:d=1.000")
+        }));
         o.audio_offset_seconds = -0.5;
         let args = build_args(&input, &dir.join("out.mp4"), &o).unwrap();
-        assert!(args.windows(2).any(|p| p[0] == "-af"
-            && p[1].to_string_lossy().contains("atrim=start=0.500,asetpts=PTS-STARTPTS")));
+        assert!(args.windows(2).any(|p| p[0] == "-af" && {
+            let filter = p[1].to_string_lossy();
+            filter.contains("atrim=start=0.500,asetpts=PTS-STARTPTS")
+                && filter.contains("afade=t=in:st=0.000:d=1.000")
+        }));
         o.audio_offset_seconds = f32::INFINITY;
         assert!(validate_options(&o).is_err());
         fs::remove_dir_all(dir).unwrap();

@@ -80,7 +80,7 @@ The broadcast video limiter converts its filter input into a known 8-bit or 10-b
 
 ## Audio synchronization offset
 
-Encoding presets now support a signed **audio offset in seconds**. Positive values delay audio using FFmpeg `adelay`; negative values advance audio by trimming its beginning and resetting timestamps. This requires an enabled, re-encoded audio stream. Shutter Encoder `.enc` audio-offset frame counts import only when an explicit conform FPS is available; without a known source timebase the importer warns instead of guessing. This is a timing adjustment, not full per-track audio routing.
+Encoding presets now support a signed **audio offset in seconds**. Positive values delay audio using FFmpeg `adelay`; negative values advance audio by trimming its beginning and resetting timestamps. This requires an enabled, re-encoded audio stream. Shutter Encoder `.enc` audio-offset frame counts import only when an explicit conform FPS is available; without a known source timebase the importer warns instead of guessing. When a positive offset is combined with fade-in, the fade begins when the delayed audio becomes audible rather than fading the inserted silence. This is a timing adjustment, not full per-track audio routing.
 
 ## Audio and video fade-in effects
 
