@@ -19,7 +19,7 @@ fn options(preset: Preset) -> EncodeOptions {
         audio_stream: -1, subtitle_stream: -1, video_stream: 0,
         deinterlace: false, denoise: false, sharpen: false,
         brightness: 0.0, contrast: 1.0, saturation: 1.0, gamma: 1.0,
-        audio_channels: 0, audio_sample_rate: 0, audio_gain_db: 0.0, audio_offset_seconds: 0.0, audio_highpass_hz: 0, audio_lowpass_hz: 0,
+        audio_channels: 0, audio_sample_rate: 0, audio_gain_db: 0.0, audio_offset_seconds: 0.0, audio_highpass_hz: 0, audio_lowpass_hz: 0, audio_equalizer_db: 0.0, audio_equalizer_hz: 1000,
         output_dir: None, ffmpeg: PathBuf::from("ffmpeg"),
     }
 }
