@@ -65,9 +65,9 @@ For identical output quality, speed settings change encoding time and compressio
 
 ## Audio and video fade-in effects
 
-Both audio and video encoding functions now support independent **fade-in durations (seconds)** in the encoding controls, implemented with FFmpeg `afade` and `fade` filters. Duration `0` disables each effect. Fade processing is relative to the trimmed output, and an audio fade requires an enabled audio stream.
+Audio and video encoding functions support independent **fade-in and fade-out durations (seconds)**, implemented with FFmpeg `afade` and `fade` filters. Duration `0` disables each effect. Fade processing is relative to the trimmed output, and an audio fade requires an enabled audio stream. **Fade-out currently requires an explicit trim end**: the encoder computes the final fade timestamp from that bounded duration and refuses unbounded fade-outs rather than buffering entire streams with reverse filters.
 
-Shutter Encoder stores transition lengths as **frame counts**; `.enc` imports translate fade-in lengths only when an explicitly enabled integer conform frame rate supplies the exact timebase. If the input's frame rate is unknown or fractional, the importer reports the setting instead of guessing. Fade-outs and more complex transitions remain unsupported.
+Shutter Encoder stores transition lengths as **frame counts**; `.enc` imports translate fade-in lengths only when an explicitly enabled integer conform frame rate supplies the exact timebase. If the input's frame rate is unknown or fractional, the importer reports the setting instead of guessing. Shutter fade-outs still require a corresponding imported trim end, so are currently reported as not transferable. Other complex transitions remain unsupported.
 
 ## Importing Shutter Encoder presets (.enc)
 
