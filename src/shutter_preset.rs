@@ -316,6 +316,14 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
     if get("caseQMax") == Some("true") && preset.video() {
         skipped.push("QMax quantizer constraints (not equivalent to encoder speed)".into());
     }
+    if get("caseLimiter") == Some("true") {
+        if preset.video() {
+            settings.broadcast_video_limiter = true;
+            applied.push("Broadcast legal-range video limiter".into());
+        } else {
+            skipped.push("Video limiter requires a video encoding function".into());
+        }
+    }
     if get("caseForcerDesentrelacement") == Some("true") && preset.video() {
         settings.deinterlace = true;
         applied.push("Deinterlacing".into());
@@ -329,7 +337,7 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         "caseForceQuality", "caseForceSpeed", "caseForcerEntrelacement",
         "caseForcerInversion", "caseForcerDAR", "caseSequenceFPS",
         "caseGamma", "caseColormatrix", "caseColorspace",
-        "caseLUTs", "caseDenoise", "caseEnableCrop", "caseLimiter",
+        "caseLUTs", "caseDenoise", "caseEnableCrop",
     ];
     for name in UNSUPPORTED_ACTIVE_OPTIONS {
         if get(name) == Some("true") {
@@ -343,6 +351,7 @@ pub fn import_xml(xml: &str, base: &Settings) -> Result<ImportResult, String> {
         "caseQMax", "caseForcerDesentrelacement", "caseConform", "caseSampleRate",
         "caseRotate", "caseMiror", "caseChangeAudioCodec", "caseAudioOffset",
         "caseVideoFadeIn", "caseAudioFadeIn", "caseVideoFadeOut", "caseAudioFadeOut",
+        "caseLimiter",
     ];
     for component in settings_node.descendants().filter(|n| n.has_tag_name("Component")) {
         let child = |tag| component.children().find(|c| c.has_tag_name(tag))
@@ -587,8 +596,8 @@ mod tests {
            <Component><Type>JCheckBox</Type><Name>caseLimiter</Name><Value>true</Value></Component>
         </Settings></Shutter>"#;
         let imported = import_xml(xml, &Settings::default()).unwrap();
-        assert!(imported.skipped.iter().any(|s| s.contains("caseLimiter")));
-        assert!(!imported.applied.iter().any(|s| s.contains("limiter")));
+        assert!(imported.settings.broadcast_video_limiter);
+        assert!(imported.applied.iter().any(|s| s.contains("limiter")));
     }
     #[test]
     fn refuses_unknown_function_and_entity_declaration() {
