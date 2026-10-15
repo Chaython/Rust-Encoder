@@ -1045,50 +1045,23 @@ impl EncoderApp {
             .and_then(|j| j.media.as_ref()).cloned();
         if let Some(info) = selected {
             ui.small(info.summary());
-            // Use FFplay's native synchronized A/V renderer in a companion window.
-            // The egui timeline remains a low-cost, silent sampled preview.
+            // FFmpeg-backed embedded playback is the default. The separate
+            // FFplay utility is optional and is not part of every FFmpeg package.
+            let live = self.native_video.as_ref().is_some_and(|p| Some(p.job_id) == self.selected_job)
+                || self.native_audio.as_ref().is_some_and(|a| Some(a.job_id) == self.selected_job);
+            let paused = self.native_paused_job == self.selected_job;
+            let playable = info.video_codec.is_some()
+                || (!info.audio_tracks.is_empty() && self.settings.audio_stream != -2);
             ui.horizontal_wrapped(|ui| {
-                let running = self.av_player.as_ref().is_some_and(|p| p.job_id == self.selected_job.unwrap_or(0));
-                let title = if running { "▶ Restart A/V at playhead" }
-                    else { "▶ Play A/V (FFplay window)" };
-                if ui.button(title).clicked()
-                    && let Some(job) = self.jobs.iter().find(|j| Some(j.id) == self.selected_job)
-                {
-                    let end = info.duration_sec.map(|duration| {
-                        preview_bounds(duration, self.settings.start_seconds, self.settings.end_seconds)
-                    });
-                    let position = end.map(|(start, finish)| {
-                        if self.preview_seconds < start || self.preview_seconds >= finish {
-                            start
-                        } else {
-                            self.preview_seconds
-                        }
-                    }).unwrap_or(self.preview_seconds.max(0.0));
-                    let stop = end.map(|(_, finish)| finish);
-                    self.launch_av_preview(job.id, job.input.clone(), position, stop);
-                }
-                if ui.add_enabled(running, egui::Button::new("■ Stop A/V")).clicked() {
-                    self.av_player = None;
-                }
-            });
-            ui.small("FFplay opens a separate synchronized audio/video player. Space pauses there, arrows seek; close it or Stop A/V to exit.");
-            if let Some(error) = &self.native_error {
-                ui.colored_label(egui::Color32::LIGHT_RED, format!("Embedded preview: {error}"));
-            }
-            ui.horizontal_wrapped(|ui| {
-                let live = self.native_video.as_ref().is_some_and(|p| Some(p.job_id) == self.selected_job)
-                    || self.native_audio.as_ref().is_some_and(|a| Some(a.job_id) == self.selected_job);
-                let paused = self.native_paused_job == self.selected_job;
-                let playable = info.video_codec.is_some()
-                    || (!info.audio_tracks.is_empty() && self.settings.audio_stream != -2);
-                let play_label = if live { "▶ Restart embedded" }
-                    else if paused { "▶ Resume embedded" }
-                    else { "▶ Embedded playback (experimental)" };
-                if ui.add_enabled(playable, egui::Button::new(play_label)).clicked()
-                    && let Some(job) = self.jobs.iter().find(|j| Some(j.id) == self.selected_job)
+                let play_label = if live { "▶ Restart" } else if paused { "▶ Resume" } else { "▶ Play" };
+                if ui.add_enabled(playable, egui::Button::new(play_label)
+                    .min_size(egui::vec2(88.0, 30.0))
+                ).clicked() && let Some(job) = self.jobs.iter()
+                    .find(|j| Some(j.id) == self.selected_job)
                 {
                     let (position, until) = info.duration_sec.map(|duration| {
-                        let (start, end) = preview_bounds(duration, self.settings.start_seconds, self.settings.end_seconds);
+                        let (start, end) = preview_bounds(
+                            duration, self.settings.start_seconds, self.settings.end_seconds);
                         let position = if self.preview_seconds >= start && self.preview_seconds < end {
                             self.preview_seconds
                         } else { start };
@@ -1096,29 +1069,48 @@ impl EncoderApp {
                     }).unwrap_or((self.preview_seconds.max(0.0), None));
                     self.launch_native_video(job.id, job.input.clone(), position, until);
                 }
-                if ui.add_enabled(live, egui::Button::new("⏸ Pause embedded")).clicked() {
+                if ui.add_enabled(live, egui::Button::new("⏸ Pause")).clicked() {
                     self.pause_native_video();
                 }
-                if ui.add_enabled(live || paused, egui::Button::new("■ Stop embedded")).clicked() {
+                if ui.add_enabled(live || paused, egui::Button::new("■ Stop")).clicked() {
                     self.stop_native_video();
                 }
-            });
-            if let Some(error) = &self.native_audio_error {
-                ui.colored_label(egui::Color32::YELLOW, format!("Native audio: {error}"));
-                ui.small("FFplay remains available as an audio/video fallback.");
-            }
-            if let Some(audio) = self.native_audio.as_ref() {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label("Playback volume");
-                    if ui.add(egui::Slider::new(&mut self.native_volume, 0.0..=1.0)).changed() {
+                if let Some(audio) = self.native_audio.as_ref() {
+                    ui.label("Volume");
+                    if ui.add(egui::Slider::new(&mut self.native_volume, 0.0..=1.0)
+                        .show_value(false)).changed() {
                         audio.set_volume(self.native_volume);
                     }
-                    if audio.underruns() > 4800 {
-                        ui.small("Audio output may be underrunning.");
-                    }
-                });
+                    if audio.underruns() > 4800 { ui.small("Audio underruns detected"); }
+                }
+            });
+            if let Some(error) = &self.native_error {
+                ui.colored_label(egui::Color32::LIGHT_RED, format!("Embedded video: {error}"));
             }
-            ui.small("Embedded playback uses an approximate audio-master clock. Pause/Resume restarts decoding at the preserved playhead; FFplay remains the fallback.");
+            if let Some(error) = &self.native_audio_error {
+                ui.colored_label(egui::Color32::YELLOW, format!("Embedded audio: {error}"));
+            }
+            ui.collapsing("External playback (optional FFplay)", |ui| {
+                let running = self.av_player.as_ref().is_some_and(
+                    |p| p.job_id == self.selected_job.unwrap_or(0));
+                if ui.button(if running { "▶ Restart FFplay" } else { "▶ Open in FFplay" }).clicked()
+                    && let Some(job) = self.jobs.iter().find(|j| Some(j.id) == self.selected_job)
+                {
+                    let bounds = info.duration_sec.map(|duration|
+                        preview_bounds(duration, self.settings.start_seconds, self.settings.end_seconds));
+                    let position = bounds.map(|(start, finish)| {
+                        if self.preview_seconds < start || self.preview_seconds >= finish {
+                            start
+                        } else { self.preview_seconds }
+                    }).unwrap_or(self.preview_seconds.max(0.0));
+                    self.launch_av_preview(job.id, job.input.clone(), position,
+                        bounds.map(|(_, finish)| finish));
+                }
+                if ui.add_enabled(running, egui::Button::new("■ Close FFplay")).clicked() {
+                    self.av_player = None;
+                }
+                ui.small("FFplay is a separate optional executable. The main Play button uses FFmpeg.");
+            });
             if let Some(texture) = &self.waveform_texture {
                 let size = egui::vec2(ui.available_width().max(100.0), 64.0);
                 ui.image((texture.id(), size));
@@ -1228,7 +1220,7 @@ impl EncoderApp {
                 }
             });
         }
-        ui.small("Experimental embedded A/V supports pause/resume, audio-only media and independently finishing audio tails. FFplay is the fallback; source-PTS synchronization, multi-cut EDL and audio-track editing remain unported.");
+        ui.small("The embedded FFmpeg player is the default. A/V synchronization is approximate; FFplay remains an optional external fallback.");
     }
 
     fn function_ui(&mut self, ui: &mut egui::Ui) {
