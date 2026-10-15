@@ -363,5 +363,25 @@ fn two_selected_audio_streams_mix_into_one_encodable_track() {
         assert_eq!(String::from_utf8_lossy(&streams.stdout).lines().count(), 1,
             "expected one mixed audio stream in {}", name);
     }
+    // Two-pass must analyze video without orphaning the audio mix graph,
+    // then include the mixed stream only on its final encoding pass.
+    let mut two_pass = options(Preset::H264);
+    two_pass.audio_stream = 0;
+    two_pass.audio_mix_secondary_stream = 1;
+    two_pass.use_video_bitrate = true;
+    two_pass.video_bitrate_kbps = 350;
+    two_pass.two_pass = true;
+    let destination = dir.join("two-pass-mixed.mp4");
+    let passlog = dir.join("mix-passlog");
+    for pass in [1, 2] {
+        let args = encode::build_two_pass_args(&input, &destination, &two_pass, pass, &passlog).unwrap();
+        command_ok(Command::new("ffmpeg").args(args));
+    }
+    let result = Command::new("ffprobe").args([
+        "-v", "error", "-select_streams", "a",
+        "-show_entries", "stream=index", "-of", "csv=p=0",
+    ]).arg(&destination).output().unwrap();
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8_lossy(&result.stdout).lines().count(), 1);
     fs::remove_dir_all(dir).unwrap();
 }

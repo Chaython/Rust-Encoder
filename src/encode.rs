@@ -186,9 +186,6 @@ pub fn validate_options(options: &EncodeOptions) -> Result<(), String> {
         if options.audio_stream == options.audio_mix_secondary_stream {
             return Err("Cannot mix an audio track with itself".into());
         }
-        if options.two_pass {
-            return Err("Two-pass encoding with mixed audio is not yet supported".into());
-        }
     }
     let audio_processing = options.audio_mix_secondary_stream >= 0
         || options.audio_channels != 0 || options.audio_sample_rate != 0
@@ -875,7 +872,14 @@ pub fn build_two_pass_args(
     } else {
         std::env::current_dir().map_err(|error| error.to_string())?.join(temp_output)
     };
-    let mut args = build_args(&absolute_input, &absolute_output, options)?;
+    // Video analysis pass should not instantiate an audio mix graph that has
+    // no consumer once -an disables output audio. Mix only on pass two.
+    let mut first_pass_options = options.clone();
+    if pass == 1 {
+        first_pass_options.audio_mix_secondary_stream = -1;
+    }
+    let mut args = build_args(&absolute_input, &absolute_output,
+        if pass == 1 { &first_pass_options } else { options })?;
     args.pop();
     if options.preset == Preset::H265 {
         // Generic FFmpeg -pass can exit successfully while x265 writes EMPTY
@@ -1645,7 +1649,14 @@ mod tests {
         o.preset = Preset::H264;
         o.use_video_bitrate = true;
         o.two_pass = true;
-        assert!(validate_options(&o).is_err());
+        assert!(validate_options(&o).is_ok());
+        let prefix = dir.join("passlog");
+        let first = build_two_pass_args(&input, &dir.join("mixed.mp4"), &o, 1, &prefix).unwrap();
+        let second = build_two_pass_args(&input, &dir.join("mixed.mp4"), &o, 2, &prefix).unwrap();
+        assert!(first.iter().any(|v| v == "-an"));
+        assert!(!first.iter().any(|v| v == "-filter_complex"));
+        assert!(second.windows(2).any(|w| w[0] == "-map" && w[1] == "[mixed_audio]"));
+        assert!(second.iter().any(|v| v == "-filter_complex"));
         fs::remove_dir_all(dir).unwrap();
     }
 
