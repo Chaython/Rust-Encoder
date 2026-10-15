@@ -63,6 +63,11 @@ fn conversion_preview_audio_and_remux_finish() {
             options.frame_rate = 5;
             options.deinterlace = true;
             options.denoise = true;
+            options.broadcast_video_limiter = true;
+            options.video_detail_amount = 3;
+            options.video_grain_amount = 20;
+            options.video_nlmeans_strength = 2;
+            options.video_deflicker_amount = 10;
             options.sharpen = true;
             options.brightness = 0.12;
             options.contrast = 1.1;
