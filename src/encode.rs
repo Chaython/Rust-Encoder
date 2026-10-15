@@ -1384,6 +1384,25 @@ mod tests {
     }
 
     #[test]
+    fn parametrized_equalizer_emits_filter_and_rejects_invalid_settings() {
+        let dir = std::env::temp_dir().join(format!("rust-encoder-param-eq-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("source.wav");
+        fs::write(&input, b"fixture").unwrap();
+        let mut o = options(Preset::Wav);
+        o.audio_equalizer_hz = 2500;
+        o.audio_equalizer_db = -3.5;
+        let args = build_args(&input, &dir.join("out.wav"), &o).unwrap();
+        assert!(args.windows(2).any(|p| p[0] == "-af"
+            && p[1].to_string_lossy().contains("equalizer=f=2500:t=q:w=1:g=-3.50")));
+        o.audio_equalizer_hz = 0;
+        assert!(validate_options(&o).is_err());
+        o.audio_equalizer_hz = 2500;
+        o.audio_equalizer_db = f32::NAN;
+        assert!(validate_options(&o).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn highpass_lowpass_filters_are_validated_and_encoded() {
         let dir = std::env::temp_dir().join(format!("rust-encoder-eq-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
